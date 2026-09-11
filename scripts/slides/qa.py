@@ -1,13 +1,13 @@
-"""Measure every text box with real Calibri metrics and render a layout preview.
+"""Measure every text box with real Arial metrics and render a layout preview.
 
 For environments with no slide renderer: run `QA=1 node build.js`, then this.
 Flags any text box whose wrapped text is taller than the box, or that leaves
-the slide. Needs Pillow and PowerPoint's bundled Calibri."""
+the slide. Needs Pillow; uses macOS's Arial."""
 import json, pathlib
 from PIL import Image, ImageDraw, ImageFont
 
 HERE = pathlib.Path(__file__).parent
-FONTS = pathlib.Path("/Applications/Microsoft PowerPoint.app/Contents/Resources/DFonts")
+FONTS = pathlib.Path("/System/Library/Fonts/Supplemental")
 DPI = 96
 W, H = 13.333, 7.5
 _cache = {}
@@ -15,7 +15,7 @@ _cache = {}
 def font(pt, bold):
     key = (round(pt * DPI / 72), bold)
     if key not in _cache:
-        _cache[key] = ImageFont.truetype(str(FONTS / ("Calibrib.ttf" if bold else "Calibri.ttf")), key[0])
+        _cache[key] = ImageFont.truetype(str(FONTS / ("Arial Bold.ttf" if bold else "Arial.ttf")), key[0])
     return _cache[key]
 
 def wrap(text, f, width_px):

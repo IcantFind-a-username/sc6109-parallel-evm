@@ -24,8 +24,10 @@ const C = {
   aqua: "1BAF7A", // M3
   red: "C8402E",
 };
-const HEAD = "Calibri";
-const BODY = "Calibri";
+// Arial, not Calibri: Calibri ships with Office only, and iOS and macOS
+// previews substitute a serif for it. Arial renders the same everywhere.
+const HEAD = "Arial";
+const BODY = "Arial";
 
 const pres = new pptxgen();
 // QA: record every element so scripts can measure text fit without a renderer.
@@ -53,7 +55,7 @@ const M = 0.6; // margin
 
 function title(slide, text, opts = {}) {
   slide.addText(text, {
-    x: M, y: 0.45, w: W - 2 * M, h: 0.9, fontFace: HEAD, fontSize: 32, bold: true,
+    x: M, y: 0.45, w: W - 2 * M, h: 0.9, fontFace: HEAD, fontSize: 28, bold: true,
     color: opts.dark ? C.paper : C.text, margin: 0, isTextBox: true, valign: "top",
   });
 }
@@ -365,18 +367,8 @@ function source(slide, text, opts = {}) {
   kicker(s, "Result 3");
   title(s, "A transaction has to do more work than it costs to coordinate");
   const labels = ["1.6 µs (0 B)", "4.1 µs (1 KB)", "21 µs (8 KB)", "78 µs (32 KB)"];
-  s.addChart(pres.charts.LINE, [
-    { name: "M2a round-based", labels, values: [1.07, 3.11, 5.05, 5.51] },
-    { name: "M2b Block-STM", labels, values: [1.61, 3.18, 5.16, 5.58] },
-    { name: "M3 static", labels, values: [1.80, 3.58, 5.29, 5.46] },
-  ], {
-    x: M, y: 1.5, w: 8.0, h: 5.2, chartColors: [C.blue, C.orange, C.aqua], lineSize: 2.5, lineDataSymbolSize: 9,
-    catAxisLabelColor: C.muted, valAxisLabelColor: C.muted, catAxisLabelFontSize: 12, valAxisLabelFontSize: 12,
-    valAxisMinVal: 0, valAxisMaxVal: 6, valAxisMajorUnit: 1, valGridLine: { color: C.line, size: 1 }, catGridLine: { style: "none" },
-    showLegend: true, legendPos: "b", legendFontSize: 12, legendColor: C.text,
-    showTitle: true, title: "Speedup at 6 threads vs sequential time per transaction", titleFontSize: 14, titleColor: C.text,
-    showValAxisTitle: true, valAxisTitle: "speedup", valAxisTitleColor: C.muted, valAxisTitleFontSize: 12,
-  });
+  // Images, not native charts: iOS and macOS previews do not draw native charts.
+  image(s, "fig3_speedup_by_work.png", M, 1.6, 8.0, 1.763);
   stat(s, "~40%", "of sequential throughput lost to Block-STM's own machinery at one thread, on light transactions", 9.3, 1.7, 3.4, { color: C.orange });
   stat(s, "92%", "of linear on 6 cores once each transaction does ~78 µs of work", 9.3, 3.9, 3.4, { color: C.aqua });
   source(s, "sha256 precompile calls with a growing payload; conflicts held near zero.");
@@ -411,18 +403,7 @@ function source(slide, text, opts = {}) {
   s.background = { color: C.paper };
   kicker(s, "Result 5");
   title(s, "Per-account conflict detection throws ERC-20 parallelism away");
-  s.addChart(pres.charts.BAR, [
-    { name: "per storage slot", labels: ["M2a round-based", "M2b Block-STM", "M3 static"], values: [2.87, 2.92, 3.10] },
-    { name: "per account", labels: ["M2a round-based", "M2b Block-STM", "M3 static"], values: [0.01, 0.50, 0.31] },
-  ], {
-    x: M, y: 1.5, w: 7.6, h: 5.2, barDir: "col", barGrouping: "clustered", barGapWidthPct: 60,
-    chartColors: [C.blue, C.orange], catAxisLabelColor: C.text, valAxisLabelColor: C.muted,
-    catAxisLabelFontSize: 13, valAxisLabelFontSize: 12, valAxisMinVal: 0, valAxisMaxVal: 3.5, valAxisMajorUnit: 0.5,
-    valGridLine: { color: C.line, size: 1 }, catGridLine: { style: "none" },
-    showValue: true, dataLabelPosition: "outEnd", dataLabelFontSize: 12, dataLabelColor: C.text, dataLabelFormatCode: "0.00\"×\"",
-    showLegend: true, legendPos: "b", legendFontSize: 12, legendColor: C.text,
-    showTitle: true, title: "ERC-20 transfers among many holders, speedup at 6 threads", titleFontSize: 14, titleColor: C.text,
-  });
+  image(s, "slide_granularity_erc20.png", M, 1.5, 7.6, 1.477);
   body(s, "Why", 8.7, 1.7, 4.0, 0.4, { size: 15, bold: true });
   body(s, "Every ERC-20 balance is a storage slot in the token contract. Per slot, transfers between different holders never collide. Per account, they all collide in one account — the token.", 8.7, 2.15, 4.0, 1.9, { size: 13.5 });
   body(s, "So what", 8.7, 4.15, 4.0, 0.4, { size: 15, bold: true });
@@ -441,16 +422,7 @@ function source(slide, text, opts = {}) {
   s.background = { color: C.paper };
   kicker(s, "The answer");
   title(s, "Parallel execution pays only when all three hold");
-  s.addChart(pres.charts.BAR, [
-    { name: "Block-STM, 6 threads", labels: ["compute-heavy, independent", "ERC-20, many holders", "ETH transfers, independent", "ERC-20, per-account detection", "NFT mint (one chain)"], values: [5.58, 2.80, 1.41, 0.50, 0.43] },
-  ], {
-    x: M, y: 1.5, w: 6.6, h: 5.1, barDir: "bar", chartColors: [C.orange], barGapWidthPct: 45,
-    catAxisLabelColor: C.text, valAxisLabelColor: C.muted, catAxisLabelFontSize: 12, valAxisLabelFontSize: 11,
-    valAxisMinVal: 0, valAxisMaxVal: 6.5, valGridLine: { color: C.line, size: 1 }, catGridLine: { style: "none" },
-    showValue: true, dataLabelPosition: "outEnd", dataLabelFontSize: 12, dataLabelColor: C.text, dataLabelFormatCode: "0.00\"×\"",
-    showLegend: false, catAxisOrientation: "maxMin",
-    showTitle: true, title: "Speedup over sequential (1.0 = no gain)", titleFontSize: 13, titleColor: C.muted,
-  });
+  image(s, "slide_answer_bars.png", M, 1.55, 6.6, 1.308);
   const conds = [
     ["1", "Short dependency chains", "A hot contract is a ceiling no engine removes — only the application can shard it."],
     ["2", "Real work per transaction", "Coordination costs a roughly fixed amount; light transactions never earn it back."],
