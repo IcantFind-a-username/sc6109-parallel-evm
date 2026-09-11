@@ -71,9 +71,13 @@ All cargo commands run from `engine/`.
 
 ```
 cargo test                                         # unit + differential tests
-cargo test --release -- --ignored                  # full 1000-seed gate sweeps
+cargo test --release -- --ignored                  # full gate sweeps and stress tests
 cargo run --release --bin demo                     # one block through the sequential baseline
-cargo run --release --bin bench -- m2a-baseline    # M2a control table -> results/
+cargo run --release --bin bench -- final           # every figure's data -> results/final/
+cargo run --release --bin bench -- alloc           # allocator comparison (also run with --no-default-features)
+cargo run --release --bin bench -- export          # workloads for the Anvil cross-check
+python3 ../scripts/anvil_crosscheck.py ../results/scratch/crosscheck.json
+python3 ../scripts/plot.py                         # figures -> docs/figures/
 ```
 
 ## Do not

@@ -85,58 +85,55 @@ impl Scheduler for BlockStmScheduler {
         );
         let limit = execution_limit(n);
 
+        // Built before the timed region, as the other parallel schedulers build
+        // theirs: creating threads is not scheduling work, and on a block that
+        // runs in milliseconds it would otherwise be a visible share of the
+        // measurement. `broadcast` runs exactly one worker on every pool thread.
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(config.threads)
+            .build()
+            .expect("thread pool");
+
         let start = Instant::now();
-        std::thread::scope(|scope| {
-            for _ in 0..config.threads {
-                scope.spawn(|| {
-                    coordinator.run_worker(
-                        |v| {
-                            let view = MVView::new(&mv, base, v.tx);
-                            let out =
-                                execute(view, txs[v.tx].clone(), &config.block, config.granularity);
-                            let wrote_new_location = match out.outcome {
-                                Err(EVMError::Database(StateError::Blocked { on })) => {
-                                    waits.fetch_add(1, Relaxed);
-                                    return Execution::Blocked { on };
-                                }
-                                Ok(done) => {
-                                    reverted[v.tx].store(!done.is_success(), Relaxed);
-                                    *refused[v.tx].lock().expect("refused lock") = None;
-                                    mv.apply(
-                                        v.tx,
-                                        v.incarnation,
-                                        Some(&done.writes),
-                                        &out.served,
-                                        base,
-                                    )
-                                }
-                                Err(err) => {
-                                    refusals.fetch_add(1, Relaxed);
-                                    *refused[v.tx].lock().expect("refused lock") =
-                                        Some(format!("{err:?}"));
-                                    mv.apply(v.tx, v.incarnation, None, &out.served, base)
-                                }
-                            };
-                            // Stored before the coordinator marks the transaction
-                            // executed, so no validation can see a stale read set.
-                            *reads[v.tx].lock().expect("reads lock") = out.reads;
-                            per_tx[v.tx].fetch_add(1, Relaxed);
-                            let total = executions.fetch_add(1, Relaxed) + 1;
-                            assert!(
-                                total <= limit,
-                                "{total} executions for a block of {n}: past the backstop, so the \
+        pool.broadcast(|_| {
+            coordinator.run_worker(
+                |v| {
+                    let view = MVView::new(&mv, base, v.tx);
+                    let out = execute(view, txs[v.tx].clone(), &config.block, config.granularity);
+                    let wrote_new_location = match out.outcome {
+                        Err(EVMError::Database(StateError::Blocked { on })) => {
+                            waits.fetch_add(1, Relaxed);
+                            return Execution::Blocked { on };
+                        }
+                        Ok(done) => {
+                            reverted[v.tx].store(!done.is_success(), Relaxed);
+                            *refused[v.tx].lock().expect("refused lock") = None;
+                            mv.apply(v.tx, v.incarnation, Some(&done.writes), &out.served, base)
+                        }
+                        Err(err) => {
+                            refusals.fetch_add(1, Relaxed);
+                            *refused[v.tx].lock().expect("refused lock") = Some(format!("{err:?}"));
+                            mv.apply(v.tx, v.incarnation, None, &out.served, base)
+                        }
+                    };
+                    // Stored before the coordinator marks the transaction
+                    // executed, so no validation can see a stale read set.
+                    *reads[v.tx].lock().expect("reads lock") = out.reads;
+                    per_tx[v.tx].fetch_add(1, Relaxed);
+                    let total = executions.fetch_add(1, Relaxed) + 1;
+                    assert!(
+                        total <= limit,
+                        "{total} executions for a block of {n}: past the backstop, so the \
                                  store or the coordinator is inconsistent"
-                            );
-                            Execution::Done { wrote_new_location }
-                        },
-                        |v| mv.validate(v.tx, &reads[v.tx].lock().expect("reads lock")),
-                        |v| {
-                            aborts.fetch_add(1, Relaxed);
-                            mv.mark_estimates(v.tx);
-                        },
                     );
-                });
-            }
+                    Execution::Done { wrote_new_location }
+                },
+                |v| mv.validate(v.tx, &reads[v.tx].lock().expect("reads lock")),
+                |v| {
+                    aborts.fetch_add(1, Relaxed);
+                    mv.mark_estimates(v.tx);
+                },
+            );
         });
         let wall_clock = start.elapsed();
 

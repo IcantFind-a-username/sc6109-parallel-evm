@@ -1,18 +1,28 @@
 //! Benchmark runner. Never part of `cargo test`.
 //!
 //! ```text
-//! cargo run --release --bin bench -- m2a-baseline [out-dir]
+//! cargo run --release --bin bench -- final  [out-dir]   # every figure's data
+//! cargo run --release --bin bench -- alloc  [out-dir]   # allocator comparison (run twice, see below)
+//! cargo run --release --bin bench -- export [file]      # workloads for the Anvil cross-check
 //! ```
 //!
-//! Every run's final state is checked against the sequential baseline before
-//! its timing is kept, outside the timed region. A timing taken on a wrong
-//! result is not a measurement.
+//! Every parallel run's final state is diffed against the sequential result,
+//! outside the timed region, before its timing is kept. A timing taken on a
+//! wrong result is not a measurement, and the runner refuses to record one.
+//!
+//! The allocator is fixed per binary (D15), so the allocator comparison is two
+//! invocations: once as built by default, once built with
+//! `--no-default-features`. Each writes a file named after its allocator.
 
 use parevm::sched::Scheduler;
 use parevm::workload::{
-    analyse, ComputeConfig, ComputeWorkload, Distribution, TransferConfig, TransferWorkload,
+    analyse, ComputeConfig, ComputeWorkload, ContractConfig, ContractKind, ContractWorkload,
+    DependencyProfile, Distribution, TransferConfig, TransferWorkload,
 };
-use parevm::{RoundScheduler, SchedulerConfig, SequentialScheduler, Workload};
+use parevm::{
+    BlockOutcome, BlockStmScheduler, Granularity, RoundScheduler, SchedulerConfig,
+    SequentialScheduler, StaticScheduler, Workload,
+};
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -20,108 +30,133 @@ use std::time::Duration;
 
 const SEED: u64 = 2026;
 const RUNS: usize = 5;
+/// Block size for the main sweep (D24).
+const BLOCK: usize = 2_000;
 const THREADS: [usize; 6] = [1, 2, 4, 6, 8, 12];
-const TRANSACTIONS: usize = 10_000;
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    let dir = |default: &str| {
+        args.get(1)
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(default))
+    };
     match args.first().map(String::as_str) {
-        Some("m2a-baseline") => {
-            let out = args
-                .get(1)
-                .map(PathBuf::from)
-                .unwrap_or_else(|| PathBuf::from("../results"));
-            m2a_baseline(&out);
-        }
+        Some("final") => final_sweep(&dir("../results/final")),
+        Some("alloc") => allocator(&dir("../results/final")),
         Some("export") => {
-            let out = args
-                .get(1)
-                .map(PathBuf::from)
-                .unwrap_or_else(|| PathBuf::from("../results/scratch/crosscheck.json"));
-            export::write(&out);
+            export::write(&dir("../results/scratch/crosscheck.json"));
         }
         _ => {
-            eprintln!("usage: bench m2a-baseline [out-dir] | export [file]");
+            eprintln!("usage: bench final [dir] | alloc [dir] | export [file]");
             std::process::exit(2);
         }
     }
 }
 
+/// One workload in the sweep, with its measured dependency structure.
 struct Cell {
     workload: Workload,
     family: &'static str,
     param: String,
     accounts: usize,
+    profile: DependencyProfile,
 }
 
-fn cells() -> Vec<Cell> {
-    let mut cells = Vec::new();
-    let transfer = |accounts, recipients, family, param: &str| Cell {
-        workload: TransferWorkload::generate(
-            &TransferConfig {
-                accounts,
-                transactions: TRANSACTIONS,
-                recipients,
-                ..Default::default()
-            },
-            SEED,
-        ),
+fn cell(workload: Workload, family: &'static str, param: &str, accounts: usize) -> Cell {
+    let profile = analyse(&workload, &SchedulerConfig::default().block);
+    Cell {
+        workload,
         family,
         param: param.to_string(),
         accounts,
-    };
-    // Low-conflict uniform at the D17 default ratio, then the 1:1 configurations
-    // E9 measured, ending with the Zipf 2.0 block M2b is meant to fix.
-    cells.push(transfer(
-        1_000_000,
-        Distribution::Uniform,
-        "transfer",
-        "uniform",
-    ));
-    cells.push(transfer(
-        10_000,
-        Distribution::Uniform,
-        "transfer",
-        "uniform",
-    ));
-    cells.push(transfer(
-        10_000,
-        Distribution::Zipf { s: 0.8 },
-        "transfer",
-        "zipf0.8",
-    ));
-    cells.push(transfer(
-        10_000,
-        Distribution::Zipf { s: 1.2 },
-        "transfer",
-        "zipf1.2",
-    ));
-    cells.push(transfer(
-        10_000,
-        Distribution::Zipf { s: 2.0 },
-        "transfer",
-        "zipf2.0",
-    ));
-    for payload in [0, 1_024, 8_192, 32_768] {
-        cells.push(Cell {
-            workload: ComputeWorkload::generate(
-                &ComputeConfig {
-                    accounts: 1_000_000,
-                    transactions: TRANSACTIONS,
-                    payload,
-                },
-                SEED,
-            ),
-            family: "compute",
-            param: format!("{payload}b"),
-            accounts: 1_000_000,
-        });
+        profile,
     }
-    cells
 }
 
-fn median<T: Copy + Ord>(mut v: Vec<T>) -> T {
-    v.sort_unstable();
+fn transfer(accounts: usize, recipients: Distribution, n: usize, param: &str) -> Cell {
+    let w = TransferWorkload::generate(
+        &TransferConfig {
+            accounts,
+            transactions: n,
+            recipients,
+            ..Default::default()
+        },
+        SEED,
+    );
+    cell(w, "transfer", param, accounts)
+}
+
+fn compute(payload: usize, n: usize) -> Cell {
+    let accounts = 100 * n;
+    let w = ComputeWorkload::generate(
+        &ComputeConfig {
+            accounts,
+            transactions: n,
+            payload,
+        },
+        SEED,
+    );
+    cell(w, "compute", &format!("{payload}b"), accounts)
+}
+
+fn contract(kind: ContractKind, accounts: usize, n: usize) -> Cell {
+    let w = ContractWorkload::generate(
+        &ContractConfig {
+            kind,
+            accounts,
+            transactions: n,
+        },
+        SEED,
+    );
+    let label = kind.label();
+    let (family, param) = label.split_once('-').unwrap_or((&label, ""));
+    let family: &'static str = Box::leak(family.to_string().into_boxed_str());
+    cell(w, family, param, accounts)
+}
+
+/// The main sweep's workloads, spanning the conflict axis (transfers and
+/// contracts) and the work-per-transaction axis (compute).
+fn main_cells() -> Vec<Cell> {
+    let n = BLOCK;
+    vec![
+        transfer(100 * n, Distribution::Uniform, n, "uniform-sparse"),
+        transfer(n, Distribution::Uniform, n, "uniform-dense"),
+        transfer(n, Distribution::Zipf { s: 0.8 }, n, "zipf0.8"),
+        transfer(n, Distribution::Zipf { s: 1.2 }, n, "zipf1.2"),
+        transfer(n, Distribution::Zipf { s: 2.0 }, n, "zipf2.0"),
+        compute(0, n),
+        compute(1_024, n),
+        compute(8_192, n),
+        compute(32_768, n),
+        contract(
+            ContractKind::Erc20 {
+                recipients: Distribution::Uniform,
+            },
+            100 * n,
+            n,
+        ),
+        contract(
+            ContractKind::Erc20 {
+                recipients: Distribution::Zipf { s: 1.2 },
+            },
+            n,
+            n,
+        ),
+        contract(
+            ContractKind::Erc20Tight {
+                recipients: Distribution::Zipf { s: 1.0 },
+            },
+            n / 4,
+            n,
+        ),
+        contract(ContractKind::NftMint, 10 * n, n),
+        contract(ContractKind::AmmSwap, 10 * n, n),
+    ]
+}
+
+fn median<T: Copy + PartialOrd>(mut v: Vec<T>) -> T {
+    v.sort_by(|a, b| a.partial_cmp(b).expect("comparable"));
     v[v.len() / 2]
 }
 
@@ -129,114 +164,289 @@ fn ms(d: Duration) -> f64 {
     d.as_secs_f64() * 1e3
 }
 
-fn m2a_baseline(out_dir: &Path) {
-    std::fs::create_dir_all(out_dir).expect("create output dir");
-    // Captured before the first run, not after the last: the commit and the
-    // dirty flag must describe the code that produced the numbers, and a run
-    // takes long enough for the working tree to change underneath it.
-    let meta = metadata();
-    let mut csv = String::from(
-        "scheduler,workload,param,accounts,transactions,seed,threads,runs,\
-         dep_density,critical_path,rounds_median,executions_median,aborts_median,\
-         abort_rate_median,wall_ms_median,wall_ms_min,wall_ms_max,seq_ms_median,\
-         speedup_median,verified\n",
+const HEADER: &str = "experiment,scheduler,workload,param,granularity,accounts,transactions,seed,\
+threads,runs,dep_density,critical_path,ceiling,rounds_median,executions_median,aborts_median,\
+waits_median,refusals_median,abort_rate_median,wall_ms_median,wall_ms_min,wall_ms_max,\
+prep_ms_median,seq_ms_median,speedup_median,verified\n";
+
+/// Runs `scheduler` RUNS times after a warmup, verifies every run against the
+/// sequential reference, and appends one CSV row.
+#[allow(clippy::too_many_arguments)]
+fn measure<S: Scheduler>(
+    csv: &mut String,
+    experiment: &str,
+    scheduler: &S,
+    c: &Cell,
+    threads: usize,
+    granularity: Granularity,
+    reference: &BlockOutcome,
+    seq_ms: f64,
+) {
+    let w = &c.workload;
+    let config = SchedulerConfig {
+        threads,
+        granularity,
+        ..Default::default()
+    };
+    let _warmup = scheduler.execute_block(&w.txs, &w.base, &config);
+    let runs: Vec<BlockOutcome> = (0..RUNS)
+        .map(|_| scheduler.execute_block(&w.txs, &w.base, &config))
+        .collect();
+    let verified = runs
+        .iter()
+        .all(|r| r.state.diff(&reference.state).is_empty());
+    assert!(
+        verified,
+        "{} on {} {} at {threads} threads disagreed with sequential; refusing to record a timing",
+        scheduler.name(),
+        c.family,
+        c.param
     );
+    let stat = |f: &dyn Fn(&BlockOutcome) -> f64| median(runs.iter().map(f).collect::<Vec<_>>());
+    let wall = stat(&|r| ms(r.stats.wall_clock));
+    let walls: Vec<f64> = runs.iter().map(|r| ms(r.stats.wall_clock)).collect();
+    let g = match granularity {
+        Granularity::Slot => "slot",
+        Granularity::Account => "account",
+    };
+    let _ = writeln!(
+        csv,
+        "{experiment},{},{},{},{g},{},{},{SEED},{threads},{RUNS},{:.6},{},{:.2},{},{},{},{},{},{:.6},{:.4},{:.4},{:.4},{:.4},{:.4},{:.4},{verified}",
+        scheduler.name(),
+        c.family,
+        c.param,
+        c.accounts,
+        w.txs.len(),
+        c.profile.density(),
+        c.profile.critical_path,
+        c.profile.parallelism_ceiling(),
+        stat(&|r| r.stats.rounds as f64),
+        stat(&|r| r.stats.executions as f64),
+        stat(&|r| r.stats.aborts as f64),
+        stat(&|r| r.stats.dependency_waits as f64),
+        stat(&|r| r.stats.speculative_refusals as f64),
+        stat(&|r| r.stats.abort_rate()),
+        wall,
+        walls.iter().cloned().fold(f64::INFINITY, f64::min),
+        walls.iter().cloned().fold(0.0, f64::max),
+        stat(&|r| ms(r.stats.preparation)),
+        seq_ms,
+        seq_ms / wall,
+    );
+    eprintln!(
+        "  {:<16} {g:<7} t{threads:<2} {wall:>10.2} ms  {:>6.2}x",
+        scheduler.name(),
+        seq_ms / wall
+    );
+}
 
-    for cell in cells() {
-        let w = &cell.workload;
-        let block = SchedulerConfig::default().block;
-        let profile = analyse(w, &block);
+/// The sequential baseline: warmup, RUNS runs, median; the first run's state is
+/// the reference every parallel run is checked against.
+fn baseline(csv: &mut String, experiment: &str, c: &Cell) -> (BlockOutcome, f64) {
+    let w = &c.workload;
+    let config = SchedulerConfig::default();
+    let s = SequentialScheduler::new();
+    let _warmup = s.execute_block(&w.txs, &w.base, &config);
+    let runs: Vec<BlockOutcome> = (0..RUNS)
+        .map(|_| s.execute_block(&w.txs, &w.base, &config))
+        .collect();
+    let seq = median(runs.iter().map(|r| ms(r.stats.wall_clock)).collect());
+    let reference = runs.into_iter().next().expect("runs");
+    measure(
+        csv,
+        experiment,
+        &s,
+        c,
+        1,
+        Granularity::Slot,
+        &reference,
+        seq,
+    );
+    (reference, seq)
+}
+
+fn final_sweep(out: &Path) {
+    std::fs::create_dir_all(out).expect("create output dir");
+    let meta = metadata("final sweep: every figure's data");
+    let mut csv = String::from(HEADER);
+
+    // Main sweep: every scheduler, every workload, every thread count.
+    for c in main_cells() {
         eprintln!(
-            "{} {} ({} accounts): density {:.3}, critical path {}",
-            cell.family,
-            cell.param,
-            cell.accounts,
-            profile.density(),
-            profile.critical_path
+            "{} {} — density {:.3}, critical path {}",
+            c.family,
+            c.param,
+            c.profile.density(),
+            c.profile.critical_path
         );
-
-        let seq_cfg = SchedulerConfig::default();
-        let _warmup = SequentialScheduler::new().execute_block(&w.txs, &w.base, &seq_cfg);
-        let seq_runs: Vec<_> = (0..RUNS)
-            .map(|_| SequentialScheduler::new().execute_block(&w.txs, &w.base, &seq_cfg))
-            .collect();
-        let reference = seq_runs[0].state.clone();
-        let seq_times: Vec<Duration> = seq_runs.iter().map(|r| r.stats.wall_clock).collect();
-        let seq_median = median(seq_times.clone());
-
-        let row_prefix = |scheduler: &str, threads: usize| {
-            format!(
-                "{scheduler},{},{},{},{},{SEED},{threads},{RUNS},{:.6},{}",
-                cell.family,
-                cell.param,
-                cell.accounts,
-                w.txs.len(),
-                profile.density(),
-                profile.critical_path
-            )
-        };
-
-        let _ = writeln!(
-            csv,
-            "{},1,{},0,0.000000,{:.3},{:.3},{:.3},{:.3},1.0000,true",
-            row_prefix("sequential", 1),
-            w.txs.len(),
-            ms(seq_median),
-            ms(*seq_times.iter().min().unwrap()),
-            ms(*seq_times.iter().max().unwrap()),
-            ms(seq_median),
-        );
-
-        for threads in THREADS {
-            let cfg = SchedulerConfig {
-                threads,
-                ..Default::default()
-            };
-            let _warmup = RoundScheduler::new().execute_block(&w.txs, &w.base, &cfg);
-            let runs: Vec<_> = (0..RUNS)
-                .map(|_| RoundScheduler::new().execute_block(&w.txs, &w.base, &cfg))
-                .collect();
-            let verified = runs.iter().all(|r| r.state.diff(&reference).is_empty());
-            assert!(
-                verified,
-                "{} {} at {threads} threads disagreed with sequential; refusing to record a timing",
-                cell.family, cell.param
+        let (reference, seq) = baseline(&mut csv, "main", &c);
+        for t in THREADS {
+            measure(
+                &mut csv,
+                "main",
+                &RoundScheduler::new(),
+                &c,
+                t,
+                Granularity::Slot,
+                &reference,
+                seq,
             );
-
-            let times: Vec<Duration> = runs.iter().map(|r| r.stats.wall_clock).collect();
-            let wall = median(times.clone());
-            // Abort rate as a per-mille integer so the median stays over an Ord type.
-            let abort_permille = median(
-                runs.iter()
-                    .map(|r| (r.stats.abort_rate() * 1e6) as u64)
-                    .collect(),
+            measure(
+                &mut csv,
+                "main",
+                &BlockStmScheduler::new(),
+                &c,
+                t,
+                Granularity::Slot,
+                &reference,
+                seq,
             );
-            let _ = writeln!(
-                csv,
-                "{},{},{},{},{:.6},{:.3},{:.3},{:.3},{:.3},{:.4},{verified}",
-                row_prefix("blockstm-rounds", threads),
-                median(runs.iter().map(|r| r.stats.rounds).collect()),
-                median(runs.iter().map(|r| r.stats.executions).collect()),
-                median(runs.iter().map(|r| r.stats.aborts).collect()),
-                abort_permille as f64 / 1e6,
-                ms(wall),
-                ms(*times.iter().min().unwrap()),
-                ms(*times.iter().max().unwrap()),
-                ms(seq_median),
-                seq_median.as_secs_f64() / wall.as_secs_f64(),
-            );
-            eprintln!(
-                "  t{threads:<2}: {:>9.1} ms  speedup {:.2}x  rounds {}",
-                ms(wall),
-                seq_median.as_secs_f64() / wall.as_secs_f64(),
-                median(runs.iter().map(|r| r.stats.rounds).collect())
+            measure(
+                &mut csv,
+                "main",
+                &StaticScheduler::new(),
+                &c,
+                t,
+                Granularity::Slot,
+                &reference,
+                seq,
             );
         }
     }
 
-    std::fs::write(out_dir.join("m2a_baseline.csv"), csv).expect("write csv");
-    std::fs::write(out_dir.join("m2a_baseline.meta.txt"), meta).expect("write metadata");
-    eprintln!("wrote {}", out_dir.join("m2a_baseline.csv").display());
+    // D9: false conflicts from coarse detection. Only workloads whose accounts
+    // hold several slots can differ; transfers are a control that should not.
+    let n = BLOCK;
+    for c in [
+        contract(
+            ContractKind::Erc20 {
+                recipients: Distribution::Uniform,
+            },
+            100 * n,
+            n,
+        ),
+        contract(
+            ContractKind::Erc20 {
+                recipients: Distribution::Zipf { s: 1.2 },
+            },
+            n,
+            n,
+        ),
+        contract(ContractKind::AmmSwap, 10 * n, n),
+        transfer(100 * n, Distribution::Uniform, n, "uniform-sparse"),
+    ] {
+        eprintln!("granularity: {} {}", c.family, c.param);
+        let (reference, seq) = baseline(&mut csv, "granularity", &c);
+        for g in [Granularity::Slot, Granularity::Account] {
+            measure(
+                &mut csv,
+                "granularity",
+                &RoundScheduler::new(),
+                &c,
+                6,
+                g,
+                &reference,
+                seq,
+            );
+            measure(
+                &mut csv,
+                "granularity",
+                &BlockStmScheduler::new(),
+                &c,
+                6,
+                g,
+                &reference,
+                seq,
+            );
+            measure(
+                &mut csv,
+                "granularity",
+                &StaticScheduler::new(),
+                &c,
+                6,
+                g,
+                &reference,
+                seq,
+            );
+        }
+    }
+
+    // Block size: does per-block overhead explain small-block results?
+    for size in [500, 2_000, 8_000] {
+        for c in [
+            contract(
+                ContractKind::Erc20 {
+                    recipients: Distribution::Uniform,
+                },
+                100 * size,
+                size,
+            ),
+            compute(1_024, size),
+        ] {
+            eprintln!("batch {size}: {} {}", c.family, c.param);
+            let (reference, seq) = baseline(&mut csv, "batch", &c);
+            measure(
+                &mut csv,
+                "batch",
+                &BlockStmScheduler::new(),
+                &c,
+                6,
+                Granularity::Slot,
+                &reference,
+                seq,
+            );
+            measure(
+                &mut csv,
+                "batch",
+                &StaticScheduler::new(),
+                &c,
+                6,
+                Granularity::Slot,
+                &reference,
+                seq,
+            );
+        }
+    }
+
+    std::fs::write(out.join("sweep.csv"), csv).expect("write csv");
+    std::fs::write(out.join("sweep.meta.txt"), meta).expect("write metadata");
+    eprintln!("wrote {}", out.join("sweep.csv").display());
+}
+
+/// A small fixed subset, run once per allocator build (D15).
+fn allocator(out: &Path) {
+    std::fs::create_dir_all(out).expect("create output dir");
+    let meta = metadata("allocator comparison");
+    let mut csv = String::from(HEADER);
+    let n = BLOCK;
+    for c in [
+        transfer(100 * n, Distribution::Uniform, n, "uniform-sparse"),
+        compute(1_024, n),
+        contract(
+            ContractKind::Erc20 {
+                recipients: Distribution::Uniform,
+            },
+            100 * n,
+            n,
+        ),
+    ] {
+        let (reference, seq) = baseline(&mut csv, "alloc", &c);
+        for t in [1, 2, 4, 6] {
+            measure(
+                &mut csv,
+                "alloc",
+                &BlockStmScheduler::new(),
+                &c,
+                t,
+                Granularity::Slot,
+                &reference,
+                seq,
+            );
+        }
+    }
+    let name = format!("alloc_{}", parevm::ALLOCATOR);
+    std::fs::write(out.join(format!("{name}.csv")), csv).expect("write csv");
+    std::fs::write(out.join(format!("{name}.meta.txt")), meta).expect("write metadata");
 }
 
 fn sh(cmd: &str, args: &[&str]) -> String {
@@ -261,25 +471,26 @@ fn revm_version() -> String {
         .unwrap_or_else(|| "unknown".into())
 }
 
-fn metadata() -> String {
+/// Captured before the first run: the commit and dirty flag must describe the
+/// code that produced the numbers.
+fn metadata(purpose: &str) -> String {
     let dirty = !sh("git", &["status", "--porcelain", "--untracked-files=no"]).is_empty();
     format!(
-        "# M2a baseline — internal diagnostic data\n\
+        "# {purpose}\n\
          #\n\
-         # Per D13, nothing here is reportable until the Anvil cross-validation\n\
-         # gate passes. Per EXPERIMENTS.md section 6.1, thread counts above the\n\
-         # performance-core count run partly on efficiency cores and do not\n\
-         # measure scheduler behaviour alone.\n\
+         # Thread counts above the performance-core count run partly on\n\
+         # efficiency cores (EXPERIMENTS.md section 6.1): 1-6 threads are the\n\
+         # primary result; 8 and 12 are reported and annotated as such.\n\
          \n\
-         purpose: control group for M2b (ROADMAP M2b gate)\n\
          date: {}\n\
          git_commit: {}\n\
          git_dirty: {dirty}\n\
          seed: {SEED}\n\
          runs_per_cell: {RUNS} (median reported; one warmup run discarded)\n\
          threads: {THREADS:?}\n\
-         transactions_per_block: {TRANSACTIONS}\n\
+         block_size_main: {BLOCK}\n\
          verification: every parallel run's final state diffed against sequential before its timing was kept\n\
+         timing: thread pools and per-block allocations are built before the timed region for every scheduler; the static scheduler's access-set derivation is excluded and reported as prep_ms\n\
          allocator: {} (parevm::ALLOCATOR, as compiled into this binary)\n\
          revm: {}\n\
          rustc: {}\n\

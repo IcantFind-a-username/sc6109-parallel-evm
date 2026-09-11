@@ -513,15 +513,41 @@ is itself part of what the comparison measures.
 
 ---
 
+## D24 — Final sweep design · 2026-09-12
+
+**Status:** accepted, implemented (`bench final`, `bench alloc`)
+
+- **Block size 2,000** for the main sweep, with a separate block-size sweep at
+  500 / 2,000 / 8,000. EXPERIMENTS.md first said 1,000, but E10 showed that
+  fixed per-block overhead swamps small blocks, while round-based execution is
+  quadratic on total-conflict workloads and cannot finish 10,000-transaction
+  chains in reasonable time. 2,000 keeps every scheduler measurable on every
+  workload; the block-size sweep shows how much the choice matters.
+- **Machine:** the development M3 Pro (O3). One to six threads are the primary
+  result; eight and twelve are reported and shaded as the efficiency-core region
+  (EXPERIMENTS §6.1, option 2). No homogeneous machine was available.
+- **Equal footing:** every scheduler builds its thread pool and per-block
+  structures before the timed region. Block-STM previously spawned its threads
+  inside it, which on a millisecond-scale block was a visible share of the
+  measurement; it now runs on a prebuilt rayon pool via `broadcast`.
+- **Verification:** every parallel run's final state is diffed against
+  sequential before its timing is kept; a disagreement aborts the run.
+- **Stretch goals:** mainnet replay and canonical EIP-7928 output are not done
+  (ROADMAP scope cuts); both are future work. Mainnet replay needs an external
+  RPC provider, which is the repository owner's choice.
+
+**Rejected.** Keeping the 10,000-transaction M2a baseline: superseded — the final
+sweep measures M2a beside M2b and M3 on identical blocks, which is the
+comparison the M2b gate asks for.
+
+---
+
 ## Open
 
 Decisions not yet made. Move them above when settled.
 
-- **O2 — Multi-version store concrete type.** `DashMap<(Address, U256),
-  BTreeMap<TxIdx, WriteEntry>>` is the design sketch; the real choice depends on
-  measured contention. Defer until M2a has numbers.
-- **O3 — Benchmark machine.** The final sweep must run entirely on one machine.
-  See the note on heterogeneous cores in
-  [docs/EXPERIMENTS.md](docs/EXPERIMENTS.md).
+- **O2 — Multi-version store concrete type.** Settled in practice as
+  `DashMap<Key, BTreeMap<TxIdx, Entry>>`; revisiting it would be optimisation,
+  and the final sweep is the evidence for whether it is needed.
 - **O4 — Core A second seat.** `MVMemory` and the validation path should not be
   reviewed only by their author.
