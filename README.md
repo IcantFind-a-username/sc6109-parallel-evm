@@ -22,7 +22,7 @@ Three execution strategies, compared against each other on identical workloads:
 | Strategy | Model | Notes |
 | --- | --- | --- |
 | **Sequential** | Baseline | Single-threaded, defines ground truth |
-| **Static scheduling** | Solana Sealevel-style | Transactions declare read/write sets up front; disjoint sets run on separate threads. No aborts, but access sets are often not knowable ahead of time on the EVM |
+| **Static scheduling** | Sealevel-style / EIP-7928 | Transactions declare read/write sets up front; disjoint sets run on separate threads. No aborts. Access sets are derived by a profiling pass, mirroring how an EIP-7928 block builder would produce them |
 | **Optimistic (Block-STM)** | Speculative + validate | All transactions run optimistically against multi-version memory; a transaction that read a value later written by a lower-indexed transaction is aborted and re-executed |
 
 Block-STM is the primary contribution. Its correctness requirement is strict:

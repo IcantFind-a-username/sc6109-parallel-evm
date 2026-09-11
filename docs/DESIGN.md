@@ -222,14 +222,47 @@ Sealevel and of EIP-2930 access lists. The scheduler groups transactions with
 disjoint declared sets and runs the groups on separate threads. No speculation,
 no aborts, no multi-version memory.
 
-Its weakness is the point of including it: on the EVM, access sets frequently
-**cannot** be known ahead of execution. Dynamic jumps, `delegatecall`, and any
-storage address computed from calldata defeat static analysis. Our workload
-generator can emit exact access sets because it authored the transactions — a
-real sequencer cannot. The report must state this plainly: the static
-scheduler's numbers are an **upper bound on an approach that is not generally
-implementable on the EVM**, and that is precisely why the EVM ecosystem
-converged on optimistic execution instead.
+### 7.1 This is not a strawman — it is EIP-7928
+
+The obvious objection is that access sets cannot be known ahead of execution on
+the EVM: dynamic jumps, `delegatecall`, and storage addresses computed from
+calldata all defeat static analysis. That objection is real for *static
+analysis*, but it is not the only way to obtain an access set.
+
+**EIP-7928 (Block Access Lists)** proposes exactly this: blocks carry the
+read/write sets of their transactions, derived by the block builder during
+construction, precisely so that validators can execute in parallel. revm 41
+ships support for it — `revm_state::bal`, backed by `alloy_eip7928`.
+
+This reframes the whole comparison. The static scheduler is not a weak
+contrast case; it is **a prototype of a pending Ethereum upgrade**. The question
+the project answers becomes a live engineering one rather than an academic one:
+
+> Optimistic speculation, which works on Ethereum today, versus declared access
+> lists, which work if EIP-7928 ships — which suits EVM workloads better, and
+> under what conflict conditions?
+
+### 7.2 Where the access sets come from
+
+Access sets are **derived, not fabricated**. A profiling pass executes each
+transaction once against the base state using the same `ReadRecorder`
+instrumentation the Block-STM path uses, and its read and write sets become the
+declaration fed to the static scheduler.
+
+This matters for defensibility. A workload generator that emits access sets for
+transactions it authored proves nothing — the natural objection is that we
+handed ourselves the answer. Deriving them by execution is the same procedure
+EIP-7928 specifies for block builders, so the static scheduler receives input of
+the same provenance a real EIP-7928 builder would produce.
+
+The honest limitation to state in the report: derivation costs a full execution
+pass, so the static scheduler's measured speedup **excludes the cost of
+obtaining its own input**. Under EIP-7928 that cost is paid once by the builder
+and amortised across every validator, which is the entire argument for the EIP —
+but our numbers measure the validator side only, and the report must say so.
+
+Emitting a canonical EIP-7928 `BlockAccessList` via revm's `bal_builder` is a
+stretch goal, not a requirement; see [ROADMAP.md](ROADMAP.md).
 
 ---
 

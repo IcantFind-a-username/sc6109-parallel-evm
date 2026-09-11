@@ -126,13 +126,134 @@ report is submitted.
 
 ---
 
+## D7 — Core architecture: one execution path, decorator stack · 2026-09-11
+
+**Decided by:** user, on proposal
+**Status:** accepted
+
+All three schedulers share one execution path. They differ only in which
+`DatabaseRef` is handed to revm and what they do with the result. State access
+is layered:
+
+```
+revm → WrapDatabaseRef → ReadRecorder<V: StateView> → V → BaseState
+                                                      ├── MVView   (parallel)
+                                                      └── SimpleView (sequential)
+```
+
+`StateView` is our own private trait. Only `ReadRecorder` implements revm's
+`DatabaseRef`, so no read can structurally bypass logging, and all logging lives
+in one generic helper.
+
+**Why.** Read-set capture is the top correctness risk (R1). Making it
+unbypassable by construction is worth more than discipline.
+
+**Rejected.** Letting each scheduler own its execution loop. Three code paths
+means three places for a read-set bug to hide.
+
+---
+
+## D8 — Sequential baseline does not share the multi-version store · 2026-09-11
+
+**Decided by:** user, on proposal
+**Status:** accepted
+
+The sequential executor uses `SimpleView` over a plain `HashMap`, written
+deliberately simply, with no code shared with `MVMemory`.
+
+**Why.** `MVMemory` driven single-threaded in index order *does* produce
+sequential semantics, and reusing it would be elegant. But then a bug in
+`MVMemory` corrupts both sides of the differential test identically, the two
+agree, and the test reports success. Differential testing only has power when
+the two implementations are independent.
+
+**Rejected.** Sharing `MVMemory` for both. Costs ~100 lines to avoid; those 100
+lines are what make the M1 and M2 gates mean anything.
+
+---
+
+## D9 — Conflict granularity is an experimental variable · 2026-09-11
+
+**Decided by:** user, on proposal
+**Status:** accepted
+
+`Key::Basic` is account-granular by default, with a switch for finer
+balance/nonce separation. The two settings are compared as an experiment
+measuring false-conflict rate.
+
+**Why.** Account granularity produces false conflicts (tx A writes only nonce,
+tx B reads only balance). Cost to make it a variable is an enum and a flag, and
+it directly answers the brief's "conflict detection rule based on account
+access, storage slot access, or simplified read/write sets".
+
+---
+
+## D10 — Single crate, `parevm`, under `engine/` · 2026-09-11
+
+**Decided by:** user, on proposal
+**Status:** accepted
+
+One library crate with modules, plus `src/bin/{demo,bench}.rs`.
+
+**Rejected.** A cargo workspace. Ceremony without benefit at this size.
+
+---
+
+## D11 — revm pinned to `=41.0.0` · 2026-09-11
+
+**Decided by:** Claude, with reasoning stated; user did not object
+**Status:** accepted — **reversible cheaply only until M1**
+
+**Why.** At time of pinning, 43.0.2 was two days old and 43.0.1 had been yanked;
+42.0.0 had also been yanked. The 41 line has no yanks and three months of
+settling, and is recent enough that documentation and examples match.
+
+**Rejected.** Latest (43.0.2) — churn in a line whose previous patch was yanked
+is a poor bet against a fixed deadline. Older (40.x) — three patch releases in
+that line suggest 40.0.0 shipped with problems.
+
+---
+
+## D12 — EIP-7928 reframing adopted; revm BAL integration deferred · 2026-09-11
+
+**Decided by:** Claude, delegated by the user on grading grounds
+**Status:** accepted
+
+revm 41 ships EIP-7928 Block Access List support (`revm_state::bal`, backed by
+`alloy_eip7928`). Three things were possible. We take two of them:
+
+1. **Adopted — reframe the static scheduler as an EIP-7928 prototype.** Zero
+   code. Turns the static scheduler from a weak contrast case into a prototype
+   of a pending Ethereum upgrade, and makes the Block-STM-versus-declared-access-
+   lists comparison a live engineering question. See
+   [DESIGN.md §7.1](docs/DESIGN.md).
+2. **Adopted — derive access sets by profiling, using our own `ReadRecorder`.**
+   Near-zero cost, since the machinery exists for M2 anyway. Removes the
+   objection that we fabricated the access sets for transactions we authored.
+   See [DESIGN.md §7.2](docs/DESIGN.md).
+3. **Deferred — emitting canonical EIP-7928 `BlockAccessList` via revm's
+   `bal_builder`.** Ranked *below* mainnet block replay on the stretch list, and
+   likely not done.
+
+**Why (3) is deferred.** The brief's feature requirements do not mention access
+lists; grading follows those five requirements. Item 1 already captures the
+narrative value and item 2 already closes the provenance objection, so item 3
+buys only format conformance. It would land in M3 — the week the full sweep runs
+and the figures are produced — and an unknown-cost integration against a new API
+in that week risks the figures, which are the graded core. Mainnet replay
+outranks it because an empirical finding about real blocks is worth more than a
+serialisation detail.
+
+**Rejected outright.** Using revm's `BalState` as our primary execution
+database. It is built for a different purpose and would conflict with the
+multi-version store. We borrow the concept, not the implementation.
+
+---
+
 ## Open
 
 Decisions not yet made. Move them above when settled.
 
-- **O1 — revm version to pin.** Needs a survey of what the current release
-  exposes for `DatabaseRef`, `ResultAndState` and the beneficiary config, then
-  a pin that does not move for the rest of the project. Blocks M0.
 - **O2 — Multi-version store concrete type.** `DashMap<(Address, U256),
   BTreeMap<TxIdx, WriteEntry>>` is the design sketch; the real choice depends on
   measured contention. Defer until M2a has numbers.

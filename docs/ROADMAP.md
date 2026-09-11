@@ -80,7 +80,10 @@ tracking with `ESTIMATE` markers, validation preferred at low indices.
 
 ## M3 — Static scheduler + full experiment sweep · by **2026-10-18**
 
-- [ ] `StaticScheduler` — Sealevel-style, grouped by declared access sets
+- [ ] Access-set profiling pass — derive read/write sets via `ReadRecorder`
+      ([DESIGN.md §7.2](DESIGN.md)), not from the workload generator
+- [ ] `StaticScheduler` — grouped by declared access sets; framed as an
+      EIP-7928 prototype ([DESIGN.md §7.1](DESIGN.md))
 - [ ] All four workloads implemented and parameterised
 - [ ] Benchmark machine fixed (see [EXPERIMENTS.md §6.1](EXPERIMENTS.md) —
       the M3 Pro's P/E core split constrains usable thread counts)
@@ -144,13 +147,24 @@ contingency for M2 is the M2a/M2b split, not a rewrite.
 
 ---
 
+## Stretch goals, in priority order
+
+Only after M3's gate is green. Both are outside the brief's requirements.
+
+1. **Mainnet block replay** — replay real blocks, report measured available
+   parallelism. An empirical finding, and the strongest single sentence
+   available for the defence.
+2. **Canonical EIP-7928 output** — emit a `BlockAccessList` via revm's
+   `bal_builder`. Format conformance only; the EIP-7928 framing and the derived
+   access sets (D12) already deliver the substance. Likely not done.
+
 ## Scope cuts, in the order we take them
 
 If the schedule slips, cut from the bottom up. Decide early, not on Oct 24.
 
-1. Mainnet block replay (bonus, not required by the brief)
+1. Both stretch goals above
 2. M2b collaborative scheduler — ship M2a instead
-3. 16-thread data point, if the machine cannot produce stable numbers
+3. High-thread data points, if the machine cannot produce stable numbers
 4. AMM workload — NFT mint alone demonstrates the total-conflict case
 
 **Never cut:** the differential test, the Anvil cross-validation, or the

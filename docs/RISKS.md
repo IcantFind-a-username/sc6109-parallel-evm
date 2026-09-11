@@ -21,6 +21,19 @@ exists, and runs 1000 seeds in CI. Enumerate read categories explicitly against
 [DESIGN.md §2.2](DESIGN.md) and assert the log is non-empty for each. When a
 divergence appears, suspect the read set first, not the concurrency.
 
+**Known gap in the structural mitigation.** The plan was that making
+`ReadRecorder` the only implementor of the revm-facing trait would turn a missed
+read path into a compile error. revm 41's `DatabaseRef` defeats this partially:
+it has five methods, and `storage_by_account_id_ref` carries a **default
+implementation**, so the compiler does not force us to write it. The default
+delegates to `self.storage_ref(..)`, which on `ReadRecorder` does log — but that
+is a property we are relying on, not one we are guaranteed.
+
+Therefore: **implement all five methods explicitly on `ReadRecorder`, including
+the defaulted one**, and add a per-method test asserting the log is non-empty
+after the call. A version bump could silently add another defaulted read method;
+this is the second reason the revm version is pinned (see R4).
+
 ---
 
 ## R2 — Beneficiary account serialises everything · *high impact, certain*

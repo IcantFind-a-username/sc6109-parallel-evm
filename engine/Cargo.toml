@@ -1,0 +1,15 @@
+[package]
+name = "parevm"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.91"
+description = "Parallel transaction execution engine for EVM workloads (SC6109 Option 5)"
+
+[dependencies]
+# PINNED. Do not change without a DECISIONS.md entry. See CLAUDE.md.
+revm = "=41.0.0"
+
+[dev-dependencies]
+
+[profile.release]
+debug = true      # benchmarks need symbols for profiling
