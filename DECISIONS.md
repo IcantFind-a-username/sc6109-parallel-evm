@@ -284,6 +284,104 @@ Anvil proves our sequential engine matches the EVM.
 
 ---
 
+## D14 — Coarse granularity means "a write is also a read" (settles O5) · 2026-09-11
+
+**Decided by:** user
+**Status:** accepted — decision only; implementation before M3, off M2b's
+critical path
+
+Under `Granularity::Account`, a transaction that writes an account is treated as
+having also read **every slot of that account**. The multi-version store keeps
+refusing account granularity until this is implemented.
+
+**Why.** This is the semantics of a genuinely account-granular system: you
+cannot write part of a unit without having read the unit. It restores the
+soundness E7 found missing. Any change by a lower writer invalidates the next
+writer above it, whose re-execution changes its own version in turn, so changes
+propagate up the chain of writers — which makes checking only the latest writer
+below a reader sufficient again. The difference in abort rate between this and
+slot mode is exactly the false-conflict measurement D9 set out to make.
+
+**Rejected.** (b) recording and re-checking the full writer set — obviously
+sound, but O(writers) per validation and quadratic on a hot account, which is
+precisely the workload the experiment most needs. (c) dropping the experiment —
+gives up the brief's named axis ("account access, storage slot access") for no
+saving that matters.
+
+---
+
+## D15 — mimalloc is the global allocator (settles O6) · 2026-09-11
+
+**Decided by:** user
+**Status:** accepted, implemented
+
+Every binary and test in the engine uses mimalloc, installed in the library
+crate behind a default-on cargo feature. `--no-default-features` restores the
+system allocator.
+
+**Why.** On macOS, the system allocator's multi-threaded contention depresses
+every configuration at once and hides the engine's real scaling (E10: mimalloc
+made single-threaded execution 38% faster and raised uncoordinated scaling from
+1.10x to 1.47x). Installing it in the library, not per binary, guarantees the
+sequential baseline and the parallel engines always run under the same
+allocator, so speedup ratios stay fair — a binary that forgot the attribute
+would otherwise silently measure a different condition. The feature flag exists
+so the other condition can be reproduced when the report states which one was
+used.
+
+**The allocator is an experimental condition** and the report must say so.
+
+**Rejected.** Keeping the system allocator. It would measure macOS malloc
+contention rather than the schedulers.
+
+---
+
+## D16 — Work per transaction is an experimental variable (settles O7) · 2026-09-11
+
+**Decided by:** user
+**Status:** accepted
+
+A compute workload calls the sha256 precompile with a tunable payload, so work
+per transaction can be swept without Foundry.
+
+**Why.** E10 showed scaling depends as much on how much work each transaction
+does as on how often transactions conflict: a plain transfer costs about a
+microsecond and fixed per-transaction overhead eats the gain, while 76 µs of
+work per transaction reached 92% of linear on six performance cores. That
+quantifies a third regime in which parallel execution does not help, alongside
+conflict density and heterogeneous cores, at almost no cost.
+
+**Constraint carried from E10.** Transaction gas limits must stay below the
+EIP-7825 cap of 2²⁴ = 16,777,216, or revm refuses the transaction and the
+refusal masquerades as a fast execution. The generator asserts it.
+
+---
+
+## D17 — Figure 2 plots measured dependency density (settles O8) · 2026-09-11
+
+**Decided by:** user
+**Status:** accepted
+
+Figure 2's x-axis is **measured dependency density** — the fraction of
+transactions that read a location an earlier transaction in the block wrote —
+with critical path length as a secondary axis or companion figure. Both are
+computed from each workload's actual read and write sets, not from generator
+parameters. Workload defaults are corrected so that "uniform" sits in the
+low-conflict regime: the account set is 100× the block size.
+
+**Why.** E9 showed the Zipf exponent is not a monotone, comparable scale for
+conflict intensity: at a fixed exponent, density moves from 2% to 75% as the
+account-to-transaction ratio changes. Plotting against a generator knob would
+make the figure's x-axis mean something different at every point. Measuring the
+dependency structure directly makes any two workloads comparable on one axis,
+including contract workloads that have no Zipf parameter at all.
+
+**Rejected.** Plotting against the Zipf exponent with the account count held
+fixed. Readable, but the axis would be specific to one generator and would not
+transfer to NFT mint or AMM workloads.
+
+---
+
 ## Open
 
 Decisions not yet made. Move them above when settled.
@@ -296,35 +394,3 @@ Decisions not yet made. Move them above when settled.
   [docs/EXPERIMENTS.md](docs/EXPERIMENTS.md).
 - **O4 — Core A second seat.** `MVMemory` and the validation path should not be
   reviewed only by their author.
-- **O5 — Semantics of account-granularity conflict detection.** The current
-  implementation is unsound for validation and the multi-version store refuses
-  it (E7 in [docs/AI_USAGE.md](docs/AI_USAGE.md)). The D9 experiment cannot run
-  until one of these is chosen:
-  - *(a) Implicit read on write.* In coarse mode, any transaction that writes an
-    account is also treated as having read the whole account. Changes then
-    propagate up the chain of writers, which makes a check on the latest writer
-    sufficient. This is how a genuinely account-granular system behaves.
-  - *(b) Writer-set check.* Coarse reads record the full set of
-    `(writer, incarnation)` pairs for the account below the reader; validation
-    recomputes and compares. Exactly the coarse rule, obviously sound, but
-    O(writers) per check — quadratic on a hot account.
-  - *(c) Drop the experiment.* Keep slot granularity only and describe
-    account-level detection analytically in the report.
-
-  Claude's recommendation: (a). It models real account-granular systems, it is
-  cheap, and the difference in abort rate against slot mode is exactly the
-  false-conflict measurement D9 wanted.
-- **O6 — Global allocator.** mimalloc made single-threaded execution 38% faster
-  and improved scaling (E10). Applied to every binary, it benefits the
-  sequential baseline equally, so the comparison stays fair — but it is a
-  dependency and it changes every absolute number, so it must be decided before
-  any sweep and stated in the report.
-- **O7 — Per-transaction cost as an experimental axis.** E10 shows scaling
-  depends on work per transaction as much as on conflicts. A sha256-precompile
-  workload with a payload knob needs no compiler and gives a third figure for
-  "when parallel execution does not help".
-- **O8 — What Figure 2 plots against.** E9 shows the Zipf exponent does not
-  determine conflict density on its own; the account-to-transaction ratio
-  matters as much. Proposal: plot against measured dependency density or
-  critical path, computed from each workload, and fix the generator defaults so
-  "uniform" means a large account set.

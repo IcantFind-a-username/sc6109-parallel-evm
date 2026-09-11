@@ -7,6 +7,7 @@ description = "Parallel transaction execution engine for EVM workloads (SC6109 O
 
 [dependencies]
 dashmap = "6"
+mimalloc = { version = "0.1", optional = true }
 rand = "0.9"
 rand_chacha = "0.9"
 rayon = "1"
@@ -17,3 +18,10 @@ revm = "=41.0.0"
 
 [profile.release]
 debug = true      # benchmarks need symbols for profiling
+
+[features]
+# D15: mimalloc is an experimental condition. On by default so the sequential
+# baseline and every parallel engine always share one allocator; disable with
+# --no-default-features to reproduce the system-allocator comparison.
+default = ["mimalloc"]
+mimalloc = ["dep:mimalloc"]

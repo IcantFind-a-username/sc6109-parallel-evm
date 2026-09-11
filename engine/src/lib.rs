@@ -7,6 +7,20 @@
 //! See `docs/DESIGN.md` for the architecture and `DECISIONS.md` for why it is
 //! shaped this way.
 
+/// Installed here rather than in each binary so that no benchmark, demo or test
+/// can end up measuring a different allocator from its baseline. See D15.
+#[cfg(feature = "mimalloc")]
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
+/// The allocator this build runs under, for result metadata. The report must
+/// state it: it is an experimental condition, not an implementation detail.
+pub const ALLOCATOR: &str = if cfg!(feature = "mimalloc") {
+    "mimalloc"
+} else {
+    "system"
+};
+
 pub mod diff;
 pub mod exec;
 pub mod mv;

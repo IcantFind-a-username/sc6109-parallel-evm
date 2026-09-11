@@ -46,6 +46,8 @@ Append rows. Do not edit history.
 | 2026-09-11 | — | Claude Code | Implement the sequential scheduler, workload generator and differential harness | Implemented, 27 tests passing | A generated-workload bug (E5) was caught by a semantic assertion, not by a crash; it would otherwise have contaminated every measurement |
 | 2026-09-11 | — | Claude Code | Implement multi-version memory and the round-based scheduler (M2a) | Implemented on `feat/blockstm-rounds`; differential sweep passed first time | First-time success on concurrent code was treated as suspicious, not reassuring. Mutation testing found one untested code path and one missing termination guard — see E8 |
 | 2026-09-11 | — | Claude Code | Run the full M2a gate and the watchlist speedup check | Gate passed: 20,000 block comparisons agree. Speedup check failed | Diagnosed rather than tuned: the failure traced to workload design (E9) and per-transaction cost (E10), not to the scheduler. Three decisions raised for the user instead of being taken |
+| 2026-09-11 | user | — | Settle O5–O8 | Decided as D14–D17 | The user chose (a) for coarse granularity, adopted mimalloc, made work per transaction a variable, and moved Figure 2 to measured dependency density. Claude's recommendations were accepted on O5–O8; the user added the constraint that D14 stay off M2b's critical path |
+| 2026-09-11 | — | Claude Code | Record D14–D17, update EXPERIMENTS, install mimalloc, fix workload defaults | Done | The mimalloc feature was silently not on by default at first — see E11 |
 
 ---
 
@@ -351,6 +353,34 @@ below 16,777,216.
 All numbers in E9 and E10 are internal diagnostics taken on the development
 machine. Per D13 none are reportable until the Anvil gate passes, and per
 `EXPERIMENTS.md` §6.1 none above six threads mean anything on this machine.
+
+---
+
+### E11 — The allocator feature was not on by default · 2026-09-11
+
+**Bug:** after installing mimalloc behind a default-on cargo feature, the
+default build still used the system allocator.
+
+**Where:** `engine/Cargo.toml`.
+
+**Root cause:** `cargo add --optional` created a `[features]` section on its
+own. The edit that was meant to add `default = ["mimalloc"]` checked whether a
+`[features]` section already existed, found one, and skipped the insertion. The
+build compiled, every test passed, and nothing looked wrong.
+
+**How it was caught:** reading back the manifest after the change rather than
+trusting the edit. It was then *confirmed* by the `parevm::ALLOCATOR` constant,
+which reports the allocator a build actually runs under: `mimalloc` by default,
+`system` with `--no-default-features`.
+
+**Why it would have mattered:** the M2a baseline was the next step. It would
+have been recorded under the system allocator while its metadata claimed
+mimalloc — an experimental condition misreported in the very table that M2b is
+judged against.
+
+**Generalisation:** an experimental condition that cannot be observed at run
+time cannot be trusted. Every result file records `ALLOCATOR` from the binary
+that produced it, not from what the configuration was meant to be.
 
 ---
 

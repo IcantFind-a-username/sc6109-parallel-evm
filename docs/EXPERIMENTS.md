@@ -20,25 +20,50 @@ a rigorous account of the failure regime is what distinguishes the project.
 | --- | --- |
 | Scheduler | sequential, static, block-stm |
 | Thread count | 1, 2, 4, 6, 8, 12 on the M3 Pro (see §6.1); 1, 2, 4, 8, 16 if the sweep moves to a homogeneous machine |
-| Workload | erc20-random, erc20-zipf, nft-mint, amm-swap |
-| Conflict parameter | Zipf `s` swept across ~8 points |
+| Workload | transfer, compute (sha256), erc20-random, erc20-zipf, nft-mint, amm-swap |
+| Conflict intensity | **Measured dependency density** of each workload (D17). Generator knobs — Zipf `s`, account-to-transaction ratio — are how density is *produced*, never what is plotted |
+| Work per transaction | sha256 precompile payload of 0 / 1 / 8 / 32 KB, roughly 1 to 76 µs per transaction (D16) |
 | Batch size | 1000 transactions (fixed); 100/1000/10000 as a secondary sweep |
+| Allocator | mimalloc for every reported run (D15); the system allocator only as a stated comparison |
 
 Sequential at 1 thread is the baseline for every speedup figure.
+
+### 2.1 Dependency density and critical path
+
+Both are computed from a sequential execution of the workload, using the read
+and write sets the engine already captures, so they describe the real
+dependency structure rather than the generator's intent.
+
+- **Dependency density** — the fraction of transactions that read at least one
+  location written by an earlier transaction in the same block.
+- **Critical path** — the longest chain of such read-after-write dependencies.
+  Block size divided by critical path is the parallelism ceiling.
+
+The block beneficiary is excluded from both, for the same reason it is exempt
+from conflict detection (D4).
+
+Why these and not the Zipf exponent: E9 found that at a fixed exponent, density
+moves from 2% to 75% as the account-to-transaction ratio changes. A generator
+parameter is not a comparable scale for conflict; the measured structure is, and
+it applies equally to contract workloads that have no Zipf parameter at all.
 
 ---
 
 ## 3. Workloads
 
-Conflict density is the axis the whole study turns on. All four are written in
-Solidity, compiled with Foundry, and executed as real bytecode.
+Conflict density is the axis the whole study turns on, with work per
+transaction as the second. The contract workloads are written in Solidity,
+compiled with Foundry, and executed as real bytecode; the transfer and compute
+workloads need no compiler and exist today.
 
-| Workload | Contract | Conflict profile | Expected result |
+| Workload | Source | Conflict profile | Expected result |
 | --- | --- | --- | --- |
-| `erc20-random` | Standard ERC-20 | Senders and recipients drawn uniformly from a large account set — collisions rare | Near-linear speedup; the optimistic case |
-| `erc20-zipf` | Same contract | Recipients drawn from a Zipf distribution; `s` tunes hot-account skew | The interesting middle; speedup should degrade smoothly as `s` rises |
-| `nft-mint` | ERC-721 with `totalSupply` counter | Every transaction read-modify-writes one slot | Speedup collapses to ≈1.0 or below |
-| `amm-swap` | Constant-product pool | Every transaction touches the same two reserves | Same collapse, different mechanism |
+| `transfer` | Plain ETH transfers | Recipients uniform or Zipf. **Uniform uses an account set 100× the block size** (D17): at a 1:1 ratio, 75% of transactions depend on an earlier one (E9) | Limited by per-transaction cost, not conflicts — about a microsecond each (E10) |
+| `compute` | sha256 precompile with a payload | Only sender nonces can conflict; senders drawn from a large set | Isolates work per transaction as a variable (D16). Gas limit must stay below 2²⁴ |
+| `erc20-random` | Standard ERC-20 contract | Senders and recipients drawn uniformly from a large account set — collisions rare | Near-linear speedup; the optimistic case |
+| `erc20-zipf` | Same ERC-20 contract | Recipients drawn from a Zipf distribution; `s` tunes hot-account skew | The interesting middle; speedup should degrade smoothly as `s` rises |
+| `nft-mint` | ERC-721 contract with `totalSupply` counter | Every transaction read-modify-writes one slot | Speedup collapses to ≈1.0 or below |
+| `amm-swap` | Constant-product pool contract | Every transaction touches the same two reserves | Same collapse, different mechanism |
 
 `erc20-zipf` is the workload that produces the headline conflict-rate figure, so
 it deserves the most parameter points.
@@ -84,19 +109,28 @@ Run this one properly. It is not a throwaway control.
 
 ## 5. Headline figures
 
-Two figures carry the presentation. Build everything else around them.
+Three figures carry the presentation. Build everything else around them.
 
 **Figure 1 — Speedup × thread count.** One line per workload, threads on a log-2
 x-axis, with the linear-speedup diagonal drawn for reference. Tells the whole
 story at a glance: `erc20-random` tracks the diagonal, `nft-mint` is flat at 1.
 
-**Figure 2 — Speedup × conflict rate.** `erc20-zipf` with `s` swept, at fixed
-thread count, with abort rate on a secondary axis. Shows the degradation curve
-and, critically, the crossover point where parallel execution becomes *worse*
-than sequential.
+**Figure 2 — Speedup × measured dependency density.** Every workload and
+generator setting at a fixed thread count, placed by its *measured* dependency
+density (§2.1, D17), with abort rate on a secondary axis. Critical path length
+is shown alongside — as a secondary axis or a companion panel — because density
+alone does not fix the ceiling: a block with many short independent chains and a
+block that is one long chain can share a density and differ enormously in
+achievable speedup. Shows the degradation curve and, critically, the crossover
+point where parallel execution becomes *worse* than sequential.
+
+**Figure 3 — Speedup × work per transaction.** The compute workload at low
+dependency density, payload swept, one line per thread count. Shows the third
+regime in which parallel execution does not help: when each transaction does
+too little work to amortise per-transaction overhead (D16, E10).
 
 Supporting figures: abort-rate distribution, measured versus critical-path-bound
-speedup, batch-size scaling.
+speedup, batch-size scaling, system allocator versus mimalloc (D15).
 
 ---
 

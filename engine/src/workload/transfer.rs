@@ -58,9 +58,13 @@ pub struct TransferConfig {
 }
 
 impl Default for TransferConfig {
+    /// A low-conflict default: the account set is 100x the block.
+    ///
+    /// It used to be 1:1, which put 75% of transactions in a dependency on an
+    /// earlier one — "uniform" in name, heavily conflicting in fact (E9, D17).
     fn default() -> Self {
         Self {
-            accounts: 1_000,
+            accounts: 100_000,
             transactions: 1_000,
             recipients: Distribution::Uniform,
             value: 1_000,
