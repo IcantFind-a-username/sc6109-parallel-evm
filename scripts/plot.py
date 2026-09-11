@@ -188,7 +188,10 @@ def fig3(rows):
 def fig4(rows):
     """Work amplification: executions per transaction, rounds versus Block-STM."""
     main = [r for r in rows if r["experiment"] == "main" and r["threads"] == 6]
-    cells = sorted({label(r) for r in main}, key=lambda l: next(r["dep_density"] for r in main if label(r) == l))
+    # Ties on density are broken by name: set order varies between runs with
+    # string hash randomisation, which made the figure non-reproducible.
+    cells = sorted({label(r) for r in main},
+                   key=lambda l: (next(r["dep_density"] for r in main if label(r) == l), l))
     fig, ax = plt.subplots(figsize=(8, 5.4))
     h = 0.36
     for i, (key, color) in enumerate((("blockstm-rounds", PAIR[0]), ("blockstm", PAIR[1]))):
