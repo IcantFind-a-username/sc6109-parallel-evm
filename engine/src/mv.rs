@@ -118,23 +118,26 @@ impl MVMemory {
         }
     }
 
-    /// The version a read of `key` is recorded under: the exact location's
-    /// writer under slot granularity, the account's latest writer under
-    /// account granularity.
-    fn origin_of(&self, key: &Key, exact: &Resolved, tx: TxIdx) -> Result<ReadOrigin, StateError> {
-        let resolved = match (self.granularity, key) {
-            (Granularity::Account, Key::Basic(a) | Key::Storage(a, _)) => {
-                self.resolve_account(*a, tx)
-            }
-            _ => match exact {
-                Resolved::Base => Resolved::Base,
-                Resolved::Written(v, _) => Resolved::Written(*v, Value::Slot(U256::ZERO)),
-                Resolved::Dependency(on) => Resolved::Dependency(*on),
-            },
-        };
-        match resolved {
-            Resolved::Base => Ok(ReadOrigin::Base),
-            Resolved::Written(v, _) => Ok(ReadOrigin::Written(v)),
+    /// Under account granularity, the version a read of anything in
+    /// `address` is recorded under: the account's latest writer below `tx`.
+    ///
+    /// Must be read **before** the value it versions. `apply` publishes to the
+    /// account index only after all its value changes, so reading the index
+    /// first means the value read afterwards is at least as new as the version
+    /// recorded. Any mismatch is then "version older than value", which
+    /// validation always catches; the reverse — an old value under a new
+    /// version — would pass validation with stale data.
+    fn account_origin(
+        &self,
+        address: Address,
+        tx: TxIdx,
+    ) -> Result<Option<ReadOrigin>, StateError> {
+        if self.granularity != Granularity::Account {
+            return Ok(None);
+        }
+        match self.resolve_account(address, tx) {
+            Resolved::Base => Ok(Some(ReadOrigin::Base)),
+            Resolved::Written(v, _) => Ok(Some(ReadOrigin::Written(v))),
             Resolved::Dependency(on) => Err(StateError::Blocked { on }),
         }
     }
@@ -242,6 +245,21 @@ impl MVMemory {
                 })
                 .collect()
         };
+        for key in stale {
+            if !current.contains(&key) {
+                if let Some(mut versions) = self.data.get_mut(&key) {
+                    versions.remove(&tx);
+                }
+            }
+        }
+
+        // Published last, after every value change above is complete. A reader
+        // under account granularity reads this index *before* the value (see
+        // MVView), so if it sees this incarnation here it is guaranteed to see
+        // its values too. The opposite order let a reader pair an old value
+        // with a new version, pass validation, and commit stale state — a
+        // refused transaction surviving validation, found under stress (the
+        // account_granularity_stress test).
         let (now, before) = (accounts(&current), accounts(&previous));
         for a in &now {
             self.account_writers
@@ -252,13 +270,6 @@ impl MVMemory {
         for a in before.difference(&now) {
             if let Some(mut writers) = self.account_writers.get_mut(a) {
                 writers.remove(&tx);
-            }
-        }
-        for key in stale {
-            if !current.contains(&key) {
-                if let Some(mut versions) = self.data.get_mut(&key) {
-                    versions.remove(&tx);
-                }
             }
         }
         !current.is_subset(&previous)
@@ -434,13 +445,16 @@ impl StateView for MVView<'_> {
             // Always the base value: see MVMemory::beneficiary_delta.
             return self.base.basic(address);
         }
-        let key = Key::Basic(address);
-        let exact = self.mv.resolve(&key, self.tx);
-        let origin = self.mv.origin_of(&key, &exact, self.tx)?;
-        match exact {
+        let coarse = self.mv.account_origin(address, self.tx)?; // before the value
+        match self.mv.resolve(&Key::Basic(address), self.tx) {
             Resolved::Dependency(on) => Err(StateError::Blocked { on }),
-            Resolved::Base => Ok((self.base.basic(address)?.0, origin)),
-            Resolved::Written(_, Value::Account(info)) => Ok((info, origin)),
+            Resolved::Base => Ok((
+                self.base.basic(address)?.0,
+                coarse.unwrap_or(ReadOrigin::Base),
+            )),
+            Resolved::Written(v, Value::Account(info)) => {
+                Ok((info, coarse.unwrap_or(ReadOrigin::Written(v))))
+            }
             Resolved::Written(_, Value::Slot(_)) => unreachable!("slot stored at account key"),
         }
     }
@@ -457,13 +471,16 @@ impl StateView for MVView<'_> {
         address: Address,
         index: StorageKey,
     ) -> Result<(StorageValue, ReadOrigin), Self::Error> {
-        let key = Key::Storage(address, index);
-        let exact = self.mv.resolve(&key, self.tx);
-        let origin = self.mv.origin_of(&key, &exact, self.tx)?;
-        match exact {
+        let coarse = self.mv.account_origin(address, self.tx)?; // before the value
+        match self.mv.resolve(&Key::Storage(address, index), self.tx) {
             Resolved::Dependency(on) => Err(StateError::Blocked { on }),
-            Resolved::Base => Ok((self.base.storage(address, index)?.0, origin)),
-            Resolved::Written(_, Value::Slot(value)) => Ok((value, origin)),
+            Resolved::Base => Ok((
+                self.base.storage(address, index)?.0,
+                coarse.unwrap_or(ReadOrigin::Base),
+            )),
+            Resolved::Written(v, Value::Slot(value)) => {
+                Ok((value, coarse.unwrap_or(ReadOrigin::Written(v))))
+            }
             Resolved::Written(_, Value::Account(_)) => unreachable!("account stored at slot key"),
         }
     }

@@ -124,3 +124,27 @@ fn account_granularity_full_gate() {
         }
     }
 }
+
+/// Hammers both parallel engines under account granularity with oversubscribed
+/// threads, where a value and its account-level version can be read on either
+/// side of a concurrent write. Written to reproduce an intermittent failure:
+/// a refused transaction surviving validation because it read an old value
+/// paired with a new version.
+#[test]
+#[ignore = "stress; run with --release -- --ignored"]
+fn account_granularity_stress() {
+    for seed in 0..400 {
+        for w in workloads(seed) {
+            for threads in [8, 12, 16] {
+                let c = config(threads, Granularity::Account);
+                assert_agree(&SequentialScheduler::new(), &RoundScheduler::new(), &w, &c);
+                assert_agree(
+                    &SequentialScheduler::new(),
+                    &BlockStmScheduler::new(),
+                    &w,
+                    &c,
+                );
+            }
+        }
+    }
+}
