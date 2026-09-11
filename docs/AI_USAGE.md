@@ -54,6 +54,7 @@ Append rows. Do not edit history.
 | 2026-09-12 | user | — | Change of working mode | The user delegated all remaining design decisions to Claude and asked for the project to be finished without step-by-step review | Recorded here because it changes what the rest of this log means: from this row on, decisions marked *Decided by: Claude (delegated)* were not reviewed by the user before implementation |
 | 2026-09-12 | — | Claude Code | Settle O10, implement D18 + EIP-161 (D19) | Implemented; full gate passed — 1000 seeds × 4 transfer distributions × {2,4,6,8,12} threads, plus 1000 seeds of the compute workload | Regression tests built on the original scene: the sha256 precompile. The E8 retraction mutation is now caught end to end by the tight ERC-20 workload |
 | 2026-09-12 | — | Claude Code | Solidity workload contracts, forge tests, Rust generator (D20) | Token, Collectible, Pool; 7 forge tests, 8 engine tests | Foundry turned out to be installed all along, at `~/.foundry/bin` off `PATH`; earlier sessions reported it missing without looking. `forge build` fetched solc 0.8.28 on first use |
+| 2026-09-12 | — | Claude Code | Anvil cross-validation — the M1 gate | **Passed: 9/9 workloads agree with Anvil** — transfers, fees at 1 gwei, compute, ERC-20, tight ERC-20 with 128 reverts, NFT mint, AMM, EIP-161 cases | Checked for the ability to fail before being trusted. It catches a one-wei tamper; it does not see EIP-161, which corrected a claim made in E14 — see E15 |
 
 ---
 
@@ -522,6 +523,35 @@ zero-gas-price beneficiary at `0x0` is already one.
 **Status:** raised as O10 before any fix was written. Implementing D18 as
 decided, then discovering the precompile chain intact after a full gate and
 baseline re-run, would have cost the re-run and looked like the fix had failed.
+
+---
+
+### E15 — The Anvil claim in E14 was wrong · 2026-09-12
+
+**Claim being corrected:** E14 and D19 said that without EIP-161 "the M1 Anvil
+cross-validation would fail on empty accounts".
+
+**How it was found:** the cross-validation passed 9/9 on its first run, so it
+was checked for the ability to fail. Tampering with one expected balance in the
+export was caught at once, naming the account and the one-wei difference. But
+temporarily *disabling* EIP-161 in the engine — persisting touched empty
+accounts again — still passed 9/9.
+
+**Why:** that is EIP-161 working as designed. An empty account and a
+nonexistent one are indistinguishable to every RPC the check uses — balance,
+nonce, code, storage all read as zero — and to every opcode; `EXTCODEHASH`
+returns 0 for both. Only the state root tells them apart, and Anvil's root
+includes its dev accounts and the system contracts written every block, so it
+cannot be compared with ours.
+
+**What stands and what does not.** D19 is still right, for the reason that
+mattered: the multi-version store must not treat a precompile call as a write,
+and that is enforced by the differential gate and by
+`precompile_call_is_not_a_write`. Its Anvil justification is withdrawn — D19
+cannot cause or prevent a cross-validation mismatch. Stated plainly in the
+report: the cross-validation checks balances, nonces, code, storage and every
+transaction's success or revert; it does not, and cannot, check account
+existence.
 
 **Also fixed alongside:** the bench captured its metadata — commit, dirty flag —
 at the *end* of a multi-minute run, so any change to the tree during the run

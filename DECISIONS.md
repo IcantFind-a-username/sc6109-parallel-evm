@@ -419,10 +419,14 @@ does not exist. One function, `state::existing`, applies the rule for
 `SimpleState`, `BaseState`, `MVMemory` and the dependency analysis, and
 snapshots omit empty accounts.
 
-**Why.** It is mainnet's rule and Anvil's, so the M1 cross-validation needs it.
-And without it D18 would not fix E12's own case: a precompile call is served
-`None` and leaves a touched empty account, which is only "no change" if empty
-means absent (E14).
+**Why.** Without it D18 would not fix E12's own case: a precompile call is
+served `None` and leaves a touched empty account, which is only "no change" if
+empty means absent (E14). It is also mainnet's rule.
+
+*Correction, same day (E15):* this entry originally also claimed the M1 Anvil
+cross-validation needed it. It does not — empty and absent accounts are
+indistinguishable to every RPC and opcode, so the cross-validation passes either
+way. That justification is withdrawn; the one above stands.
 
 **Rejected.** Persisting empty accounts, as revm's `CacheDB` does — keeps the
 precompile chain and fails the Anvil gate. Pre-seeding precompile accounts —

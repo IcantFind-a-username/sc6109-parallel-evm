@@ -1,0 +1,14 @@
+# Anvil cross-validation (M1 gate)
+# anvil Version: 1.7.1; hardfork osaka; one transaction per block
+
+PASS  transfer-uniform          300 txs (0 reverted)   301 accounts     0 slots compared
+PASS  transfer-zipf1.2          300 txs (0 reverted)   301 accounts     0 slots compared
+PASS  transfer-fees-1gwei       300 txs (0 reverted)   301 accounts     0 slots compared
+PASS  compute-64b               200 txs (0 reverted)   102 accounts     0 slots compared
+PASS  erc20-zipf1               300 txs (0 reverted)   152 accounts   151 slots compared
+PASS  erc20tight-zipf1          300 txs (128 reverted)   152 accounts   151 slots compared
+PASS  nft-mint                  300 txs (0 reverted)   152 accounts   433 slots compared
+PASS  amm-swap                  300 txs (0 reverted)   152 accounts   302 slots compared
+PASS  eip161-empty-accounts      20 txs (0 reverted)    32 accounts     0 slots compared
+
+9/9 workloads agree with Anvil

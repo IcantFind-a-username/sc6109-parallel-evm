@@ -47,11 +47,14 @@ addition; if this slips, replan the scope rather than the gate.
 - [x] Workload generator emits a reproducible batch from a seed (transfers;
       ERC-20 pending Foundry)
 - [x] **Differential test harness** — compares two executors slot-for-slot
-- [ ] **Anvil cross-validation** — same batch replayed serially on Anvil,
+- [x] **Anvil cross-validation** — same batch replayed serially on Anvil,
       balances and storage compared against our engine
 
 **Gate:** our sequential engine and Anvil agree on final state for at least
 three distinct workloads.
+
+> **Passed 2026-09-12: 9/9 workloads** (`results/anvil_crosscheck.txt`). With
+> it, D13's condition is met and benchmark numbers become reportable.
 
 ---
 
