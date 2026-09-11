@@ -129,9 +129,16 @@ Names go in when the team confirms. Roles, not people, for now.
 | **Workloads** | Solidity contracts, batch generator, conflict parameters | M0, M1, M3 |
 | **Experiments** | Benchmark harness, sweep, figures, report, AI log | M3, M4 |
 
-Core A is two people because it is the hardest and most schedule-critical piece.
-The Experiments role picks up mainnet block replay (see
+Core A is two people because it is the hardest and most schedule-critical piece,
+and because `MVMemory` and the validation path should not be reviewed only by
+their author. Pair on those two modules rather than splitting them. The
+Experiments role picks up mainnet block replay (see
 [EXPERIMENTS.md](EXPERIMENTS.md)) once M3 sweeps are running, to balance load.
+
+**Stack decision is final.** Rust + revm, settled 2026-09-11 on confirmed Rust
+capacity. The Go / go-ethereum alternative weighed during planning is withdrawn
+— see [RISKS.md R8](RISKS.md). Do not reopen this if M2 gets hard; the
+contingency for M2 is the M2a/M2b split, not a rewrite.
 
 ---
 

@@ -108,15 +108,21 @@ flags in commit. Include a contract-deploying case in the differential test.
 
 ---
 
-## R8 — Rust capacity on the team · *high impact if it materialises*
+## R8 — Rust capacity on the team · *closed 2026-09-11*
 
-**What happens.** Two people own `MVMemory` and the scheduler. If neither is
-comfortable with Rust ownership and concurrency, M2 does not land.
+**Resolved.** At least one team member has working Rust and concurrency
+experience and owns a Core A seat. The Go / go-ethereum fallback considered
+during planning is **withdrawn**: the stack is Rust + revm, and revisiting it
+mid-project would cost a week for no benefit.
 
-**Mitigation.** Confirm at kickoff, not in week 3. If Rust depth is thin, the
-fallback is Go with go-ethereum's `core/vm` — same architecture, real EVM
-bytecode, real threads, materially lower learning curve. **That switch is only
-cheap before M1.** After M1 it costs a week and should not be taken.
+**Residual.** Core A is a two-person role. The second seat is still open. If it
+cannot be filled by someone who can review `MVMemory` and the validation path
+independently, the exposure moves to R1 — correctness-critical concurrent code
+with a single reviewer. Pair on those two modules rather than splitting them.
+
+> Note that Rust proficiency does not reduce R1. A missed read category is a
+> specification error, not a language error; the borrow checker cannot see it.
+> R1 remains the top risk in this project.
 
 ---
 
@@ -142,3 +148,5 @@ Check these at each weekly sync:
 - [ ] Is `Cargo.lock` unchanged? *(R4)*
 - [ ] Are we on track for the Oct 8 M2a decision point? *(R3)*
 - [ ] Is every committed CSV accompanied by its seed and machine spec? *(R6)*
+- [ ] Has anyone other than the author reviewed changes to `MVMemory` or the
+      validation path? *(R8 residual)*
