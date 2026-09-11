@@ -487,6 +487,39 @@ in a `sleep 240` killer whose `sleep` was orphaned by `kill` and held the output
 pipe open, so every mutation took four minutes whether or not anything hung.
 Replaced with `perl -e 'alarm 240; exec …'`, which has no orphan.
 
+---
+
+### E14 — D18 alone would not have fixed E12's own case · 2026-09-11
+
+**Found while scoping the E12 fix**, at the user's request to establish first
+whether the store's write set — not only the dependency metric — used the
+touched-as-written rule.
+
+**Answer to that question: yes.** `MVMemory::apply` skips only untouched
+accounts and registers every other one as a write (`mv.rs` lines 137–154). The
+scheduler itself was serialised, not just the measurement: on the compute
+workload at six threads, M2a ran 8751 rounds with a 99.6% abort rate and
+2.7–5.3 million aborts for 10,000 transactions from a million senders. Rounds
+and aborts are the scheduler's own behaviour. M2b reuses `apply`.
+
+**The further finding.** D18 compares an account's post-state against the value
+the execution was served. For the case that exposed E12 — the sha256 precompile
+at `0x02` — the served value is `None`, because the precompile's account is not
+in base state, and the post-state is a touched *empty* account. Both engines
+persist touched empty accounts, as revm's `CacheDB` does, so `None` → empty is a
+genuine change of existence, and D18 would register it as a write. The false
+chain would have survived the fix intended to remove it.
+
+Mainnet does not persist them: EIP-161 deletes accounts left empty after being
+touched. revm leaves that to its higher-level `State` layer, not `CacheDB`, and
+our engine modelled itself on `CacheDB`. That also means **the M1 Anvil
+cross-validation would fail** on empty accounts regardless of E12 — the
+zero-gas-price beneficiary at `0x0` is already one.
+
+**Status:** raised as O10 before any fix was written. Implementing D18 as
+decided, then discovering the precompile chain intact after a full gate and
+baseline re-run, would have cost the re-run and looked like the fix had failed.
+
 **Also fixed alongside:** the bench captured its metadata — commit, dirty flag —
 at the *end* of a multi-minute run, so any change to the tree during the run
 would have been misattributed. It now captures them before the first run.

@@ -420,3 +420,26 @@ Decisions not yet made. Move them above when settled.
   [docs/EXPERIMENTS.md](docs/EXPERIMENTS.md).
 - **O4 — Core A second seat.** `MVMemory` and the validation path should not be
   reviewed only by their author.
+- **O10 — Do touched empty accounts exist? (EIP-161; blocks the E12 fix).**
+  Both engines persist every touched account, empty or not — as revm's
+  `CacheDB` does. Mainnet, and therefore Anvil, applies EIP-161: an account
+  that is empty after being touched is deleted. This decides whether D18 fixes
+  the case that exposed E12. The sha256 precompile `0x02` is absent from base
+  state, so each call is served `None` and leaves a touched empty account.
+  - *(i) Adopt EIP-161 in both engines.* Touched accounts that are empty after
+    execution are treated as non-existent, in `SimpleState::commit`,
+    `MVMemory::apply`, snapshots and the dependency analysis. `None` → empty is
+    then no change, D18 removes the false chain, and the engine matches what the
+    M1 Anvil gate will compare against. Touches three components and the
+    snapshot definition.
+  - *(ii) Keep persisting empty accounts.* `None` → empty remains a real
+    existence change, so D18 registers it as a write and **the precompile chain
+    survives**. Contract accounts, which exist and are unchanged, are still
+    fixed. The Anvil gate will then fail on empty accounts — the zero-gas-price
+    beneficiary at `0x0` is one already.
+  - *(iii) Pre-seed the precompile accounts into base state.* Removes this one
+    symptom and nothing else. Listed to be rejected.
+
+  Claude's recommendation: (i). It is Ethereum's semantics, the Anvil gate
+  requires it regardless, and without it D18 does not fix the case it was
+  decided for.
