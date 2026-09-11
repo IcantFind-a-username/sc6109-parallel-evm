@@ -13,10 +13,12 @@
 
 pub mod analysis;
 pub mod compute;
+pub mod contract;
 pub mod transfer;
 
 pub use analysis::{analyse, DependencyProfile};
 pub use compute::{ComputeConfig, ComputeWorkload};
+pub use contract::{ContractConfig, ContractKind, ContractWorkload};
 pub use transfer::{is_outside_precompile_range, Distribution, TransferConfig, TransferWorkload};
 
 use crate::state::BaseState;
