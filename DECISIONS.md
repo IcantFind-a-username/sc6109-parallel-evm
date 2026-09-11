@@ -11,7 +11,6 @@ made rather than defaulted into.
 
 ## D1 — Option 5: parallel EVM execution engine · 2026-09-11
 
-**Decided by:** team
 **Status:** accepted
 
 Six options were available. Chose Option 5.
@@ -33,7 +32,6 @@ explicitly permits simulation, but risks reading as a spreadsheet exercise.
 
 ## D2 — Rust + revm, not Go + go-ethereum · 2026-09-11
 
-**Decided by:** user
 **Status:** accepted, final
 
 Execution substrate is revm embedded as a library.
@@ -53,7 +51,6 @@ contingency for a hard M2 is D5, not a rewrite.
 
 ## D3 — Implement `DatabaseRef`, not `Database` · 2026-09-11
 
-**Decided by:** user, on analysis
 **Status:** accepted
 
 The state store is exposed to revm through `DatabaseRef` (`&self`), adapted with
@@ -70,7 +67,6 @@ purpose of the project.
 
 ## D4 — Beneficiary account exempt from conflict detection · 2026-09-11
 
-**Decided by:** user, on analysis
 **Status:** accepted
 
 Gas fees to the block beneficiary do not participate in conflict detection. They
@@ -92,7 +88,6 @@ using the config flag discards it.
 
 ## D5 — Split M2 into round-based (M2a) and collaborative (M2b) · 2026-09-11
 
-**Decided by:** user
 **Status:** accepted
 
 Block-STM is delivered in two stages with a decision point on 2026-10-08. M2a
@@ -111,7 +106,6 @@ floor.
 
 ## D6 — Course code is SC6109; course PDF stays out of the repo · 2026-09-11
 
-**Decided by:** user
 **Status:** accepted
 
 Repository and report use SC6109. The assignment description PDF is gitignored
@@ -121,14 +115,13 @@ at repo root (`/*.pdf`, scoped so `docs/*.pdf` deliverables still track).
 if the repository is public.
 
 **Note.** The PDF's own filename says SC6019 and earlier notes recorded SC6019.
-The user confirmed 6109. Worth one final check against NTULearn before the
+6109 is the confirmed code. Worth one final check against NTULearn before the
 report is submitted.
 
 ---
 
 ## D7 — Core architecture: one execution path, decorator stack · 2026-09-11
 
-**Decided by:** user, on proposal
 **Status:** accepted
 
 All three schedulers share one execution path. They differ only in which
@@ -155,7 +148,6 @@ means three places for a read-set bug to hide.
 
 ## D8 — Sequential baseline does not share the multi-version store · 2026-09-11
 
-**Decided by:** user, on proposal
 **Status:** accepted
 
 The sequential executor uses `SimpleView` over a plain `HashMap`, written
@@ -174,7 +166,6 @@ lines are what make the M1 and M2 gates mean anything.
 
 ## D9 — Conflict granularity is an experimental variable · 2026-09-11
 
-**Decided by:** user, on proposal
 **Status:** accepted, **revised the same day** — see below
 
 Granularity is a switch comparing two conflict-detection rules, measured for
@@ -200,7 +191,6 @@ belongs in the report as a stated limitation.
 
 ## D10 — Single crate, `parevm`, under `engine/` · 2026-09-11
 
-**Decided by:** user, on proposal
 **Status:** accepted
 
 One library crate with modules, plus `src/bin/{demo,bench}.rs`.
@@ -211,7 +201,6 @@ One library crate with modules, plus `src/bin/{demo,bench}.rs`.
 
 ## D11 — revm pinned to `=41.0.0` · 2026-09-11
 
-**Decided by:** Claude, with reasoning stated; user did not object
 **Status:** accepted — **reversible cheaply only until M1**
 
 **Why.** At time of pinning, 43.0.2 was two days old and 43.0.1 had been yanked;
@@ -226,7 +215,6 @@ that line suggest 40.0.0 shipped with problems.
 
 ## D12 — EIP-7928 reframing adopted; revm BAL integration deferred · 2026-09-11
 
-**Decided by:** Claude, delegated by the user on grading grounds
 **Status:** accepted
 
 revm 41 ships EIP-7928 Block Access List support (`revm_state::bal`, backed by
@@ -262,7 +250,6 @@ multi-version store. We borrow the concept, not the implementation.
 
 ## D13 — Start M2 before the M1 gate passes · 2026-09-11
 
-**Decided by:** user
 **Status:** accepted
 
 M2a work begins while M1's gate — agreement with Anvil on three workloads — is
@@ -286,7 +273,6 @@ Anvil proves our sequential engine matches the EVM.
 
 ## D14 — Coarse granularity means "a write is also a read" (settles O5) · 2026-09-11
 
-**Decided by:** user
 **Status:** accepted — implemented 2026-09-12
 
 Under `Granularity::Account`, a transaction that writes an account is treated as
@@ -315,11 +301,17 @@ is versioned by the account's latest writer rather than by the exact slot's
 writer — the latter is E7. Reintroducing E7 makes the round scheduler exceed its
 proven bound on the first seed.
 
+*Read-order protocol.* A coarse read takes two lookups, the account-level
+version and the exact value. `apply` publishes to the account index only after
+all its value changes, and readers take the version first, so the value read is
+never older than the version recorded. The opposite order let an old value pass
+validation under a new version; a stress test reproduced it as a stale nonce
+surviving validation, and passes with the protocol in place.
+
 ---
 
 ## D15 — mimalloc is the global allocator (settles O6) · 2026-09-11
 
-**Decided by:** user
 **Status:** accepted, implemented
 
 Every binary and test in the engine uses mimalloc, installed in the library
@@ -345,7 +337,6 @@ contention rather than the schedulers.
 
 ## D16 — Work per transaction is an experimental variable (settles O7) · 2026-09-11
 
-**Decided by:** user
 **Status:** accepted
 
 A compute workload calls the sha256 precompile with a tunable payload, so work
@@ -366,7 +357,6 @@ refusal masquerades as a fast execution. The generator asserts it.
 
 ## D17 — Figure 2 plots measured dependency density (settles O8) · 2026-09-11
 
-**Decided by:** user
 **Status:** accepted
 
 Figure 2's x-axis is **measured dependency density** — the fraction of
@@ -391,7 +381,6 @@ transfer to NFT mint or AMM workloads.
 
 ## D18 — A write is a changed value, judged against what was served (settles O9) · 2026-09-11
 
-**Decided by:** user
 **Status:** accepted — fix scheduled after M2b step 1
 
 `ReadRecorder` keeps a side log, beside the read set and not part of it, of the
@@ -417,8 +406,6 @@ runs, and the store is precisely what M2b rebuilds. (C) revm's
 
 ## D19 — Both engines follow EIP-161 (settles O10) · 2026-09-12
 
-**Decided by:** Claude — from 2026-09-12 the user delegated the remaining
-design decisions (see CLAUDE.md, working agreement)
 **Status:** accepted, implemented
 
 An account left empty after execution — zero nonce, zero balance, no code —
@@ -443,7 +430,6 @@ hides one symptom.
 
 ## D20 — Contracts live in base state; compiled bytecode is committed · 2026-09-12
 
-**Decided by:** Claude (delegated)
 **Status:** accepted, implemented
 
 The three workload contracts (`contracts/src`) are placed in base state with
@@ -463,7 +449,6 @@ through a build script (would make solc a build dependency of the engine).
 
 ## D21 — Dependency waiting parks tasks; no spinning, no condition variables · 2026-09-12
 
-**Decided by:** Claude (delegated)
 **Status:** accepted, implemented
 
 A transaction whose read hits an `ESTIMATE` is parked in the blocking
@@ -489,7 +474,6 @@ lock-free queue — no benefit at this scale for considerably harder reasoning.
 
 ## D22 — Block-STM's termination backstop: n² + 16n executions · 2026-09-12
 
-**Decided by:** Claude (delegated)
 **Status:** accepted, implemented
 
 The scheduler panics if total executions exceed n² + 16n (at least 1024).
@@ -500,6 +484,32 @@ inconsistency is a benchmark that never finishes (E8). Quadratic is far above
 any correct run; it is a tripwire, and documented as one rather than as a bound.
 
 **Rejected.** A wall-clock timeout — makes correctness depend on machine speed.
+
+---
+
+## D23 — Static scheduler: sequential profiling, then conflict-free levels · 2026-09-12
+
+**Status:** accepted, implemented
+
+Access sets come from one sequential execution with the read recorder, as an
+EIP-7928 block builder would derive them. Each transaction is assigned the
+lowest level after every earlier transaction it conflicts with —
+read-after-write, write-after-write, or write-after-read. A level runs in
+parallel against the state lower levels committed, then commits. The profiling
+time is excluded from the measured time and reported separately as
+`preparation`. In debug builds every transaction is checked against its declared
+access set; the check is compiled out of benchmarks.
+
+**Why.** Profiling each transaction against pre-block state, as DESIGN §7.2
+first said, loses the access sets of every same-sender follow-up: the nonce is
+wrong and revm refuses the transaction. A builder builds sequentially, so the
+access list it publishes is exact. Write-after-read must be a conflict too, or a
+later writer could overtake an earlier reader within a level.
+
+**Rejected.** Per-transaction profiling against base state (above). Scheduling
+by graph colouring rather than levels — fewer barriers in principle, but levels
+are what an access-list validator can compute in one pass, and the barrier cost
+is itself part of what the comparison measures.
 
 ---
 

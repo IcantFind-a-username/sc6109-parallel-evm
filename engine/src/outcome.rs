@@ -110,6 +110,10 @@ pub struct ExecStats {
     pub rounds: usize,
     /// Wall-clock time for the whole block.
     pub wall_clock: Duration,
+    /// Work done before the timed region that the scheduler depends on. For
+    /// the static scheduler, deriving the access sets — a full sequential
+    /// execution, which under EIP-7928 the block builder pays. Zero otherwise.
+    pub preparation: Duration,
     /// Executions per transaction index, for the abort-distribution figure.
     pub executions_per_tx: Vec<u32>,
 }

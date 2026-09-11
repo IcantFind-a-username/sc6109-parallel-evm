@@ -82,6 +82,13 @@ impl SimpleState {
         self.storage.retain(|(addr, _), _| *addr != address);
     }
 
+    /// Overwrites an account's info directly. Used to credit the block
+    /// beneficiary with accumulated fees, which the parallel engines keep out of
+    /// per-transaction commits (D4).
+    pub fn set_account(&mut self, address: Address, info: AccountInfo) {
+        self.accounts.insert(address, info);
+    }
+
     /// An account as it currently exists. Under EIP-161 an empty account does
     /// not: a transfer of nothing to a nonexistent address, or a call to a
     /// precompile, leaves a touched empty account that mainnet deletes (D19).

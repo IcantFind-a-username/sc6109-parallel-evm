@@ -3,17 +3,19 @@
 //! Three strategies over one execution path:
 //!
 //! - [`sequential`] — the baseline, and the definition of correct.
-//! - `static_sched` — declared access sets, EIP-7928 style. *(M3)*
+//! - [`static_sched`] — declared access sets, EIP-7928 style (M3).
 //! - [`rounds`] — optimistic execution in rounds, the M2a fallback.
 //! - [`blockstm`] — collaborative Block-STM with dependency tracking (M2b).
 
 pub mod blockstm;
 pub mod rounds;
 pub mod sequential;
+pub mod static_sched;
 
 pub use blockstm::BlockStmScheduler;
 pub use rounds::RoundScheduler;
 pub use sequential::SequentialScheduler;
+pub use static_sched::StaticScheduler;
 
 use crate::outcome::BlockOutcome;
 use crate::state::BaseState;

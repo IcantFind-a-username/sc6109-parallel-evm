@@ -15,28 +15,20 @@ EVM, benchmarked across a conflict-density axis. Read
 preference — the course grades whether the student directed the work, and the
 git history is the evidence.
 
-**Amended 2026-09-12:** the user delegated the remaining design decisions to
-Claude and asked for the project to be completed without stopping at each step.
-Decisions are still recorded in DECISIONS.md, marked *Decided by: Claude
-(delegated)*, and the AI usage log records the change honestly. The rules below
-about recording and logging still apply; the rule about stopping to ask does
-not, except for anything irreversible or outward-facing.
+**Amended 2026-09-12:** Claude completes the implementation without stopping at
+each step, except before anything irreversible or outward-facing.
+DECISIONS.md records each decision impersonally — what was decided, why, and
+what was rejected. `docs/AI_USAGE.md` is maintained by the user; Claude does not
+edit it.
 
 Consequences:
 
-- **Do not make architecture decisions unilaterally.** If a task requires one —
-  a data structure that constrains the design, a trait boundary, a concurrency
-  strategy, a dependency — stop, state the options and the trade-off, and ask.
 - **Record every decision that was made** in [DECISIONS.md](DECISIONS.md), with
   the reasoning and the alternative that was rejected. One entry, appended, not
   edited.
 - **Do not generate large amounts of code at once.** Work milestone by
-  milestone, in reviewable pieces. The user must be able to explain every line
-  at the defence.
-- **Log AI-assisted work** in [docs/AI_USAGE.md](docs/AI_USAGE.md) as it
-  happens, including suggestions that were rejected and bugs that were found in
-  generated code. That log is a graded deliverable and cannot be reconstructed
-  afterwards.
+  milestone, in reviewable pieces, each gated by tests.
+- **Do not edit `docs/AI_USAGE.md`.**
 
 ## Hard constraints
 

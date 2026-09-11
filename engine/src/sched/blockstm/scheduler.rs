@@ -156,6 +156,7 @@ impl Scheduler for BlockStmScheduler {
             threads: config.threads,
             rounds: 0,
             wall_clock,
+            preparation: std::time::Duration::ZERO,
             executions_per_tx: per_tx.into_iter().map(AtomicU32::into_inner).collect(),
         };
         BlockOutcome {

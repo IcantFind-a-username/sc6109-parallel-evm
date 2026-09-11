@@ -244,10 +244,13 @@ the project answers becomes a live engineering one rather than an academic one:
 
 ### 7.2 Where the access sets come from
 
-Access sets are **derived, not fabricated**. A profiling pass executes each
-transaction once against the base state using the same `ReadRecorder`
-instrumentation the Block-STM path uses, and its read and write sets become the
-declaration fed to the static scheduler.
+Access sets are **derived, not fabricated**. A profiling pass executes the
+block once, sequentially, using the same `ReadRecorder` instrumentation the
+Block-STM path uses, and each transaction's read and write sets become the
+declaration fed to the static scheduler (D23). Sequentially, because that is how
+a builder derives an access list — and because executing each transaction
+against pre-block state instead would refuse every same-sender follow-up for
+its nonce and lose its access set.
 
 This matters for defensibility. A workload generator that emits access sets for
 transactions it authored proves nothing — the natural objection is that we
