@@ -4,10 +4,13 @@
 //!
 //! - [`sequential`] — the baseline, and the definition of correct.
 //! - `static_sched` — declared access sets, EIP-7928 style. *(M3)*
-//! - `blockstm` — optimistic speculation with validation. *(M2)*
+//! - [`rounds`] — optimistic execution in rounds, the M2a fallback.
+//! - `blockstm` — collaborative Block-STM with dependency tracking. *(M2b)*
 
+pub mod rounds;
 pub mod sequential;
 
+pub use rounds::RoundScheduler;
 pub use sequential::SequentialScheduler;
 
 use crate::outcome::BlockOutcome;

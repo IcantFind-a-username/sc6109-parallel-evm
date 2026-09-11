@@ -6,8 +6,10 @@ rust-version = "1.91"
 description = "Parallel transaction execution engine for EVM workloads (SC6109 Option 5)"
 
 [dependencies]
+dashmap = "6"
 rand = "0.9"
 rand_chacha = "0.9"
+rayon = "1"
 # PINNED. Do not change without a DECISIONS.md entry. See CLAUDE.md.
 revm = "=41.0.0"
 

@@ -43,6 +43,7 @@ impl Scheduler for SequentialScheduler {
         let mut stats = ExecStats {
             transactions: txs.len(),
             threads: 1,
+            rounds: 1,
             executions_per_tx: vec![0; txs.len()],
             ..Default::default()
         };
@@ -53,7 +54,7 @@ impl Scheduler for SequentialScheduler {
             stats.executions += 1;
             stats.executions_per_tx[idx] = 1;
 
-            match executed {
+            match executed.outcome {
                 Ok(out) => {
                     if !out.is_success() {
                         stats.reverted += 1;

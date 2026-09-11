@@ -98,6 +98,10 @@ pub struct ExecStats {
     pub reverted: usize,
     /// Threads the scheduler was configured with.
     pub threads: usize,
+    /// Execute-then-validate passes over the block. Always 1 for sequential;
+    /// for round-based optimistic execution this is bounded by the length of
+    /// the longest dependency chain in the block.
+    pub rounds: usize,
     /// Wall-clock time for the whole block.
     pub wall_clock: Duration,
     /// Executions per transaction index, for the abort-distribution figure.

@@ -82,8 +82,10 @@ Rust Block-STM implementation.
 
 ## Status
 
-Planning. No implementation yet. Next milestone is M0 (skeleton runs) — see
-[docs/ROADMAP.md](docs/ROADMAP.md).
+M2a (round-based optimistic execution) is implemented and passes its
+differential gate against the sequential baseline. M1's Anvil cross-validation
+is outstanding, blocked on Foundry; no performance numbers are reported until it
+passes (D13). See [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Layout (planned)
 

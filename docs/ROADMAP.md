@@ -65,13 +65,23 @@ scheduler beats a broken collaborative one.
 Execute all transactions in parallel, validate all, re-execute the aborted set,
 repeat until no aborts. Simpler, obviously correct, slightly less efficient.
 
-- [ ] Multi-version memory (`MVMemory`)
-- [ ] Read-set capture via an instrumented `DatabaseRef`
-- [ ] Validation pass
-- [ ] Abort and re-execution with incarnation numbers
+- [x] Multi-version memory (`MVMemory`), slot granularity
+- [x] Read-set capture via an instrumented `DatabaseRef`
+- [x] Validation pass
+- [x] Abort and re-execution with incarnation numbers
+- [x] Termination guard at the proven bound of `n` rounds
+- [ ] Differential sweep including a workload whose write set depends on its
+      reads (ERC-20 reverting on insufficient balance) — the only end-to-end
+      exercise of write retraction; see E8
+- [ ] Account-granularity semantics decided (O5) and implemented
 
 **Gate M2a:** differential test passes on 1000 random seeds × 4 workloads ×
 {2,4,8,16} threads, in CI.
+
+> **Status 2026-09-11:** passed on transfer workloads — 1000 seeds × 4 conflict
+> levels × {2,4,6,8,12} threads, 20,000 block comparisons, all agreeing
+> (`cargo test --release -- --ignored`). Thread counts follow EXPERIMENTS §6.1.
+> ERC-20 and the other contract workloads join the sweep once Foundry is in.
 
 ### M2b — Collaborative scheduler (Block-STM proper)
 Atomic `execution_idx` / `validation_idx`, per-transaction status, dependency

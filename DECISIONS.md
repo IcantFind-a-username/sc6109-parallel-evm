@@ -260,6 +260,30 @@ multi-version store. We borrow the concept, not the implementation.
 
 ---
 
+## D13 — Start M2 before the M1 gate passes · 2026-09-11
+
+**Decided by:** user
+**Status:** accepted
+
+M2a work begins while M1's gate — agreement with Anvil on three workloads — is
+still open, because that gate is blocked on Foundry not being installed.
+
+**Why.** M2 is the hardest milestone and sits on the critical path. Everything
+M2a needs from M1 already exists: the sequential baseline, the workload
+generator and the differential harness. Waiting would idle the critical path on
+an installation step.
+
+**This deviates from the roadmap's own rule** that a milestone does not start
+until the previous gate is green, so it is recorded rather than done quietly.
+**Condition:** the Anvil cross-validation remains a hard gate. No benchmark
+number is reported, in the report or the slides, until it passes — the
+differential test proves the parallel engine matches our sequential engine; only
+Anvil proves our sequential engine matches the EVM.
+
+**Rejected.** Waiting for Foundry before starting M2.
+
+---
+
 ## Open
 
 Decisions not yet made. Move them above when settled.
@@ -272,3 +296,35 @@ Decisions not yet made. Move them above when settled.
   [docs/EXPERIMENTS.md](docs/EXPERIMENTS.md).
 - **O4 — Core A second seat.** `MVMemory` and the validation path should not be
   reviewed only by their author.
+- **O5 — Semantics of account-granularity conflict detection.** The current
+  implementation is unsound for validation and the multi-version store refuses
+  it (E7 in [docs/AI_USAGE.md](docs/AI_USAGE.md)). The D9 experiment cannot run
+  until one of these is chosen:
+  - *(a) Implicit read on write.* In coarse mode, any transaction that writes an
+    account is also treated as having read the whole account. Changes then
+    propagate up the chain of writers, which makes a check on the latest writer
+    sufficient. This is how a genuinely account-granular system behaves.
+  - *(b) Writer-set check.* Coarse reads record the full set of
+    `(writer, incarnation)` pairs for the account below the reader; validation
+    recomputes and compares. Exactly the coarse rule, obviously sound, but
+    O(writers) per check — quadratic on a hot account.
+  - *(c) Drop the experiment.* Keep slot granularity only and describe
+    account-level detection analytically in the report.
+
+  Claude's recommendation: (a). It models real account-granular systems, it is
+  cheap, and the difference in abort rate against slot mode is exactly the
+  false-conflict measurement D9 wanted.
+- **O6 — Global allocator.** mimalloc made single-threaded execution 38% faster
+  and improved scaling (E10). Applied to every binary, it benefits the
+  sequential baseline equally, so the comparison stays fair — but it is a
+  dependency and it changes every absolute number, so it must be decided before
+  any sweep and stated in the report.
+- **O7 — Per-transaction cost as an experimental axis.** E10 shows scaling
+  depends on work per transaction as much as on conflicts. A sha256-precompile
+  workload with a payload knob needs no compiler and gives a third figure for
+  "when parallel execution does not help".
+- **O8 — What Figure 2 plots against.** E9 shows the Zipf exponent does not
+  determine conflict density on its own; the account-to-transaction ratio
+  matters as much. Proposal: plot against measured dependency density or
+  critical path, computed from each workload, and fix the generator defaults so
+  "uniform" means a large account set.

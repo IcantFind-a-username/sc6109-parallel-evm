@@ -14,14 +14,20 @@ use revm::database_interface::{DBErrorMarker, WrapDatabaseRef};
 use revm::state::EvmState;
 use revm::{Context, ExecuteEvm, MainBuilder, MainContext};
 
-/// One transaction's output: what happened, what it wrote, what it read.
-pub struct Executed {
+/// Why the EVM refused a transaction outright.
+///
+/// Distinct from a revert: a reverted transaction executed and produced state
+/// changes (nonce, fee). A refusal produces none.
+pub type ExecError<E> = EVMError<E, InvalidTransaction>;
+
+/// A transaction that the EVM accepted and ran to completion — successfully or
+/// not.
+pub struct Completed {
     pub result: ExecutionResult,
     pub writes: EvmState,
-    pub reads: ReadSet,
 }
 
-impl Executed {
+impl Completed {
     pub fn is_success(&self) -> bool {
         self.result.is_success()
     }
@@ -31,13 +37,20 @@ impl Executed {
     }
 }
 
-/// Why a transaction could not be executed at all.
+/// One execution attempt: what it read, and what came of it.
 ///
-/// Distinct from a revert: a reverted transaction executed successfully and
-/// produced state changes (the nonce and fee). An error here means the EVM
-/// refused the transaction, which in a generated workload means the workload is
-/// malformed — most often a nonce that does not match the sender's state.
-pub type ExecError<E> = EVMError<E, InvalidTransaction>;
+/// The read set is returned **whether or not the EVM accepted the
+/// transaction**. Under speculative execution a refusal is often not a property
+/// of the transaction at all: a sender's second transaction, run before its
+/// first has written back, reads the old nonce and is refused with
+/// `NonceTooHigh`. The read set is what lets validation see that the refusal
+/// rested on a stale read and schedule a retry. Discarding it on error would
+/// make every same-sender pair in a block a fatal error. See E6 in
+/// `docs/AI_USAGE.md`.
+pub struct Executed<E> {
+    pub reads: ReadSet,
+    pub outcome: Result<Completed, ExecError<E>>,
+}
 
 /// Executes one transaction against one view of state.
 ///
@@ -48,21 +61,24 @@ pub fn execute<V>(
     tx: TxEnv,
     block: &BlockEnv,
     granularity: Granularity,
-) -> Result<Executed, ExecError<V::Error>>
+) -> Executed<V::Error>
 where
     V: StateView,
     V::Error: DBErrorMarker + core::error::Error,
 {
     let recorder = ReadRecorder::new(view, granularity);
-    let mut evm = Context::mainnet()
-        .with_block(block.clone())
-        .with_db(WrapDatabaseRef(&recorder))
-        .build_mainnet();
-
-    let out = evm.transact(tx)?;
-    Ok(Executed {
-        result: out.result,
-        writes: out.state,
+    let outcome = {
+        let mut evm = Context::mainnet()
+            .with_block(block.clone())
+            .with_db(WrapDatabaseRef(&recorder))
+            .build_mainnet();
+        evm.transact(tx).map(|out| Completed {
+            result: out.result,
+            writes: out.state,
+        })
+    };
+    Executed {
         reads: recorder.take_read_set(),
-    })
+        outcome,
+    }
 }
