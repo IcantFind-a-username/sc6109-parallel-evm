@@ -82,6 +82,8 @@ tracking with `ESTIMATE` markers, validation preferred at low indices.
 
 - [ ] `StaticScheduler` — Sealevel-style, grouped by declared access sets
 - [ ] All four workloads implemented and parameterised
+- [ ] Benchmark machine fixed (see [EXPERIMENTS.md §6.1](EXPERIMENTS.md) —
+      the M3 Pro's P/E core split constrains usable thread counts)
 - [ ] Full sweep executed, raw CSV committed under `results/`
 - [ ] Both headline figures generated
 

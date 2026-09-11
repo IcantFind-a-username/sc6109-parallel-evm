@@ -19,7 +19,7 @@ a rigorous account of the failure regime is what distinguishes the project.
 | Variable | Levels |
 | --- | --- |
 | Scheduler | sequential, static, block-stm |
-| Thread count | 1, 2, 4, 8, 16 |
+| Thread count | 1, 2, 4, 6, 8, 12 on the M3 Pro (see §6.1); 1, 2, 4, 8, 16 if the sweep moves to a homogeneous machine |
 | Workload | erc20-random, erc20-zipf, nft-mint, amm-swap |
 | Conflict parameter | Zipf `s` swept across ~8 points |
 | Batch size | 1000 transactions (fixed); 100/1000/10000 as a secondary sweep |
@@ -117,6 +117,39 @@ reproduce them will assume the worst.
 Thread counts above the physical core count will show sublinear or negative
 returns for reasons unrelated to conflicts. Note the core count on Figure 1 so
 that effect is not misread as a scheduler property.
+
+### 6.1 Heterogeneous cores — read this before choosing thread counts
+
+The development machine is an **Apple M3 Pro: 12 cores, but not 12 equal
+cores** — roughly 6 performance and 6 efficiency cores, with no SMT. E-cores are
+several times slower than P-cores on this kind of workload.
+
+This breaks the standard speedup plot in a way that is easy to misread. Beyond
+~6 threads, new threads land on E-cores and contribute far less than a linear
+share, so **the curve flattens for reasons that have nothing to do with
+conflicts**. On `erc20-random`, which should track the diagonal, the knee will
+appear around 6 and look exactly like the onset of contention. Presenting that
+as a scheduler property would be wrong, and it is the kind of claim that does
+not survive one informed question.
+
+Options, in order of preference:
+
+1. **Run the final sweep on a homogeneous machine.** Any x86 cloud VM with a
+   known core count removes the problem entirely. Cheapest fix; decide early
+   (O3 in [DECISIONS.md](../DECISIONS.md)).
+2. **Keep the primary sweep at 1, 2, 4, 6 threads** — within the P-core count —
+   and present 8 and 12 as a separately annotated region with the heterogeneity
+   called out. Scientifically honest, and the annotation itself reads as rigour.
+3. **Bias threads onto P-cores via QoS.** macOS offers no true affinity API, but
+   thread QoS class influences placement. Partial, unverifiable, hard to
+   defend — use only as a supplement, never as the basis of a figure.
+
+Whatever is chosen, **state the P/E split in the report and on Figure 1**. Do
+not silently plot 16 threads on a 12-core heterogeneous machine; that single
+choice can undermine an otherwise sound result.
+
+The 16-thread point from the original plan is dropped unless the sweep moves to
+a homogeneous machine with ≥16 cores.
 
 ---
 
