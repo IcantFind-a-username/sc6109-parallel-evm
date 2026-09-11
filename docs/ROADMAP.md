@@ -87,6 +87,20 @@ repeat until no aborts. Simpler, obviously correct, slightly less efficient.
 Atomic `execution_idx` / `validation_idx`, per-transaction status, dependency
 tracking with `ESTIMATE` markers, validation preferred at low indices.
 
+Four steps, each committed and reviewed separately:
+
+- [x] **Step 1 — coordinator skeleton**, driven by fabricated execution. Tested
+      for unique incarnation dispatch, correct final state, clean termination
+      under a watchdog, and revalidation after both aborts and new-location
+      writes. Six injected bugs, all caught (E13)
+- [ ] **E12 fix (D18)** — writes judged against served values; full gate and
+      baseline re-run
+- [ ] **Step 2** — `ESTIMATE` markers and dependency waiting. Stops for the user
+      on any change to the store's public interface, or on the choice between
+      spinning, condition variables and lock-free queues
+- [ ] **Step 3** — real execution and validation; E6 gets a dedicated test here
+- [ ] **Step 4** — full gate, then the M2a comparison table
+
 **Gate M2b:** same differential test, plus measurable improvement over M2a.
 
 ---

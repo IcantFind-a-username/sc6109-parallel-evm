@@ -50,6 +50,7 @@ Append rows. Do not edit history.
 | 2026-09-11 | — | Claude Code | Record D14–D17, update EXPERIMENTS, install mimalloc, fix workload defaults | Done | The mimalloc feature was silently not on by default at first — see E11 |
 | 2026-09-11 | — | Claude Code | Build the dependency analysis, compute workload and bench runner; record the M2a baseline | Baseline **not committed** — 4 of 9 cells invalid | The compute rows exposed a false-conflict bug in Claude's own `MVMemory::apply` (E12). The fix changes the store's interface, so it was stopped and put to the user rather than taken |
 | 2026-09-11 | user | — | Settle O9; resequence | D18: option (A). Coordinator skeleton first, E12 fix after | Claude recommended (A) and the user agreed. The user overrode Claude's proposed order, which put the E12 fix and baseline before M2b step 1 |
+| 2026-09-11 | — | Claude Code | M2b step 1: the Block-STM coordinator, driven by fabricated execution | Implemented on `feat/blockstm`; 7 tests passed first time | Mutation-tested before commit. One injected bug survived every test, exposing a property the tests did not check — see E13. The user specified the four properties; the fourth was extended |
 
 ---
 
@@ -436,6 +437,55 @@ the fix.
 **Sequencing, by the user's call:** the fix follows M2b step 1, not precedes it.
 Step 1 does not touch the store, the baseline is only needed for the M2b
 comparison in step 4, and the step 1 draft existed only in a scratch directory.
+
+---
+
+### E13 — Mutation testing the coordinator found an untested property · 2026-09-11
+
+**Context:** the M2b step 1 coordinator passed all seven of its tests on the
+first run. As with E8, that was treated as a prompt to check the tests, not as
+evidence of correctness.
+
+**Method:** six bugs were injected into `sched/blockstm/coordinator.rs`, one at
+a time, and the coordinator's tests run against each.
+
+| Mutation | Result |
+| --- | --- |
+| M1 — an aborted transaction's re-execution is never handed out | Caught: `tx 0 ended ReadyToExecute` |
+| M2 — an abort does not trigger revalidation of higher transactions | Caught: `tx 61 last validated at 114 but a lower transaction aborted at 115` |
+| M3 — an abort does not advance the incarnation, so it retries forever | Caught by the watchdog in 30 s: `coordinator did not terminate` — a failure, not a hang |
+| M4 — `check_done` drops its second read of `decrease_count` | Caught: `task count did not return to zero` — `done` was set with a task still in flight, the exact race that read exists to close |
+| M5 — an execution that wrote a new location triggers no validation at all | Caught, but shallowly: the transaction *itself* went unvalidated |
+| **M5b — an execution that wrote a new location validates only itself, not the transactions above it** | **Not caught — every test passed** |
+
+**Finding.** Property 4, as first specified, checked that every transaction is
+revalidated after any *abort* below it. That is not the only event that can make
+a higher transaction's reads stale. When a re-execution writes a location its
+previous incarnation did not, a higher transaction may already have read
+straight *through* that location to a writer further down; no abort happened
+and, from step 2, no `ESTIMATE` marker will cover it. Only the lowering of
+`validation_idx` in `finish_execution` catches it — and nothing tested that it
+happens. M5 was caught only because it also broke the transaction's own
+validation; M5b, the subtle version, broke nothing the tests looked at.
+
+**Fix:** property 4b — every transaction's last validation comes after every
+execution below it that wrote a new location. It is dated the same
+conservative way as property 4, and the reasoning is in the test's comments.
+M5b now fails with `tx N last validated at N but a lower transaction wrote a new
+location at N`, three failures, all from 4b. All six mutations are caught.
+
+**A note on property 4's dating, recorded because it will be forgotten.** Only
+the failing validation that wins `try_validation_abort` actually aborts, and
+the test cannot see which one wins. A losing validation can be stamped after
+the winner has already lowered `validation_idx`, so treating every failed
+validation as an abort would flag correct revalidations as premature. Each
+aborted version is therefore dated by its *earliest* failing validation, which
+is no later than the winner's — a lower bound every correct run satisfies.
+
+**Tooling slip, for completeness.** The first mutation harness wrapped each run
+in a `sleep 240` killer whose `sleep` was orphaned by `kill` and held the output
+pipe open, so every mutation took four minutes whether or not anything hung.
+Replaced with `perl -e 'alarm 240; exec …'`, which has no orphan.
 
 **Also fixed alongside:** the bench captured its metadata — commit, dirty flag —
 at the *end* of a multi-minute run, so any change to the tree during the run

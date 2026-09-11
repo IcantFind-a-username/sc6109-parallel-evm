@@ -7,6 +7,7 @@
 //! - [`rounds`] — optimistic execution in rounds, the M2a fallback.
 //! - `blockstm` — collaborative Block-STM with dependency tracking. *(M2b)*
 
+pub mod blockstm;
 pub mod rounds;
 pub mod sequential;
 
