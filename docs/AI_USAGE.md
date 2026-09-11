@@ -55,6 +55,7 @@ Append rows. Do not edit history.
 | 2026-09-12 | — | Claude Code | Settle O10, implement D18 + EIP-161 (D19) | Implemented; full gate passed — 1000 seeds × 4 transfer distributions × {2,4,6,8,12} threads, plus 1000 seeds of the compute workload | Regression tests built on the original scene: the sha256 precompile. The E8 retraction mutation is now caught end to end by the tight ERC-20 workload |
 | 2026-09-12 | — | Claude Code | Solidity workload contracts, forge tests, Rust generator (D20) | Token, Collectible, Pool; 7 forge tests, 8 engine tests | Foundry turned out to be installed all along, at `~/.foundry/bin` off `PATH`; earlier sessions reported it missing without looking. `forge build` fetched solc 0.8.28 on first use |
 | 2026-09-12 | — | Claude Code | Anvil cross-validation — the M1 gate | **Passed: 9/9 workloads agree with Anvil** — transfers, fees at 1 gwei, compute, ERC-20, tight ERC-20 with 128 reverts, NFT mint, AMM, EIP-161 cases | Checked for the ability to fail before being trusted. It catches a one-wei tamper; it does not see EIP-161, which corrected a claim made in E14 — see E15 |
+| 2026-09-12 | — | Claude Code | M2b steps 2–3: ESTIMATE markers, dependency parking (D21), real execution, backstop (D22) | 86 tests pass. Five new mutations, all caught | One test gap found and closed along the way — see E16 |
 
 ---
 
@@ -552,6 +553,39 @@ cannot cause or prevent a cross-validation mismatch. Stated plainly in the
 report: the cross-validation checks balances, nonces, code, storage and every
 transaction's success or revert; it does not, and cannot, check account
 existence.
+
+---
+
+### E16 — A stress test that barely tested anything · 2026-09-12
+
+**Context:** coordinator step 2 added dependency parking. The fabricated oracle
+blocks a transaction on its predecessor only while the predecessor is
+unfinished, as a real store would.
+
+**Symptom:** `stress_with_dependencies` passed — and a companion check,
+`dependencies_are_actually_exercised`, written to assert that blocking occurs at
+all, failed: fewer than ten blocks across three hundred transactions.
+
+**Root cause:** fabricated executions are effectively instant, so a
+predecessor has always finished by the time its successor looks. The dependency
+path — parking, waking, the race in `add_dependency` — was almost never taken.
+The stress test's green result meant nothing for the code it was named after.
+
+**Fix:** in blocking mode the fabricated execution does a few microseconds of
+work, so neighbouring executions overlap. Then two dependency mutations were run:
+not pulling `execution_idx` back on wake (M6) and dropping the finished-blocker
+check in `add_dependency` (M7). Both are caught; M7 is a lost wakeup that leaves
+a transaction parked forever while `done` is set around it.
+
+**Three more, on the real scheduler.** Not marking estimates on abort (M8),
+keeping the previous incarnation's read set (M9), and treating an `ESTIMATE` as
+a valid read (M10) all produce wrong final state, all caught by the differential
+test on the first seed. M8 is worth stating in the report: `ESTIMATE` is a
+correctness mechanism, not an optimisation. Without it a transaction revalidated
+after a lower abort, but before the lower transaction's re-execution, still sees
+the old version and passes; if the re-execution writes the same locations, only
+the re-executed transaction is revalidated, and the higher one commits a stale
+value.
 
 **Also fixed alongside:** the bench captured its metadata — commit, dirty flag —
 at the *end* of a multi-minute run, so any change to the tree during the run

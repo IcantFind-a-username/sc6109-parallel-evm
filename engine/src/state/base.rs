@@ -13,12 +13,18 @@ use revm::state::{AccountInfo, Bytecode};
 pub enum StateError {
     /// Code was requested by a hash the snapshot does not know.
     MissingCode(B256),
+    /// The read hit an `ESTIMATE`: transaction `on` was aborted and will
+    /// rewrite this location, so any value read now would be stale. Not a
+    /// failure — the Block-STM scheduler parks the reader until `on` has
+    /// re-executed. Raised only by the multi-version store (M2b).
+    Blocked { on: crate::types::TxIdx },
 }
 
 impl core::fmt::Display for StateError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             StateError::MissingCode(h) => write!(f, "no bytecode for hash {h}"),
+            StateError::Blocked { on } => write!(f, "read blocked on transaction {on}"),
         }
     }
 }

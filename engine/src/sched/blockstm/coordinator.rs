@@ -6,8 +6,11 @@
 //! the protocol below can be tested on its own, with fabricated execution
 //! results, before any real transaction runs through it.
 //!
-//! Follows the scheduler of the Block-STM paper (Gelashvili et al., 2022).
-//! Dependency tracking and `ESTIMATE` markers arrive in step 2.
+//! Follows the scheduler of the Block-STM paper (Gelashvili et al., 2022),
+//! including its dependency handling: a transaction whose read hits an
+//! `ESTIMATE` is parked on the transaction that wrote it and put back in the
+//! queue when that transaction finishes executing. Nothing spins or sleeps
+//! waiting for a dependency; a parked transaction simply holds no task.
 //!
 //! # State
 //!
@@ -17,10 +20,11 @@
 //!
 //! ```text
 //!   ReadyToExecute(i) --next_task--> Executing(i) --finish_execution--> Executed(i)
-//!          ^                                                               |
-//!          |                                              try_validation_abort
-//!          |                                                               v
-//!          +---------------- finish_validation (i := i + 1) ------- Aborting(i)
+//!          ^                              |                                |
+//!          |                       add_dependency              try_validation_abort
+//!          |                              v                                v
+//!          +------ (i := i + 1) ------ Aborting(i) <-----------------------+
+//!            finish_validation, or the blocking transaction's finish_execution
 //! ```
 //!
 //! Workers take whichever of the two indices is lower, so validation of early
@@ -56,12 +60,13 @@
 //!
 //! # Why it terminates
 //!
-//! Claimed indices only grow, except when `validation_idx` is lowered, and it
-//! is lowered only by an abort or by an execution that wrote a location its
-//! previous incarnation did not. So the number of tasks is finite if the number
-//! of incarnations is — and that is a property of validation, not of this
-//! module. Transaction 0 reads only pre-block state and can never fail
-//! validation. Inductively, once every transaction below `j` has run its final
+//! Claimed indices only grow, except when `validation_idx` is lowered — only by
+//! an abort or by an execution that wrote a location its previous incarnation
+//! did not — or `execution_idx` is lowered to resume parked transactions, which
+//! happens once per completed execution of the transaction they waited on. So
+//! the number of tasks is finite if the number of incarnations is — and that is
+//! a property of validation, not of this module. Transaction 0 reads only
+//! pre-block state and can never fail validation. Inductively, once every transaction below `j` has run its final
 //! incarnation, `j`'s next incarnation reads only final values and passes. So
 //! each transaction aborts finitely often, provided validation is exact — which
 //! the multi-version store supplies in step 3, and which the fabricated
@@ -72,8 +77,7 @@
 //! aborts by the history of the transactions below it, not by a constant. A
 //! store inconsistency therefore shows up as a hang rather than a failed
 //! assertion. The tests guard against that with a wall-clock watchdog; the real
-//! scheduler in step 3 will need an equivalent, and choosing one is a question
-//! for the user.
+//! scheduler bounds total executions instead (see `BlockStmScheduler`).
 
 use crate::types::{Incarnation, TxIdx, Version};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst};
@@ -102,6 +106,16 @@ pub enum Task {
     Validate(Version),
 }
 
+/// How an execution attempt ended, as reported to [`Coordinator::run_worker`].
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Execution {
+    /// Ran to completion. `wrote_new_location` as for
+    /// [`Coordinator::finish_execution`].
+    Done { wrote_new_location: bool },
+    /// A read hit an `ESTIMATE` written by transaction `on`.
+    Blocked { on: TxIdx },
+}
+
 /// Shared by every worker executing one block.
 pub struct Coordinator {
     len: usize,
@@ -111,6 +125,9 @@ pub struct Coordinator {
     active_tasks: AtomicUsize,
     done: AtomicBool,
     txs: Vec<Mutex<TxState>>,
+    /// Transactions parked on each transaction, to be resumed when it next
+    /// finishes executing.
+    dependents: Vec<Mutex<Vec<TxIdx>>>,
 }
 
 impl Coordinator {
@@ -130,6 +147,7 @@ impl Coordinator {
                     })
                 })
                 .collect(),
+            dependents: (0..len).map(|_| Mutex::new(Vec::new())).collect(),
         }
     }
 
@@ -218,6 +236,12 @@ impl Coordinator {
             );
             tx.status = Status::Executed;
         }
+        // Status is set before the dependents are taken, and add_dependency
+        // checks status under the dependents lock: a transaction parking at
+        // this moment either sees Executed and retries at once, or is in the
+        // list taken here. It cannot fall between.
+        let parked = std::mem::take(&mut *self.dependents(version.tx));
+        self.resume(parked);
         if self.validation_idx.load(SeqCst) > version.tx {
             if wrote_new_location {
                 self.decrease_validation_idx(version.tx);
@@ -257,6 +281,50 @@ impl Coordinator {
         None
     }
 
+    /// Parks `tx`, whose execution read an `ESTIMATE` written by `blocking`,
+    /// until `blocking` next finishes executing.
+    ///
+    /// Returns `false` if `blocking` has already finished — the `ESTIMATE` has
+    /// been replaced since it was read — in which case nothing was parked and
+    /// the caller should re-execute the same version straight away. On `true`
+    /// the caller's task is released: a parked transaction holds none.
+    pub fn add_dependency(&self, tx: TxIdx, blocking: TxIdx) -> bool {
+        assert!(
+            blocking < tx,
+            "tx {tx} blocked on later transaction {blocking}"
+        );
+        {
+            let mut parked = self.dependents(blocking);
+            if self.tx(blocking).status == Status::Executed {
+                return false;
+            }
+            let mut state = self.tx(tx);
+            assert_eq!(
+                state.status,
+                Status::Executing,
+                "add_dependency on transaction {tx}"
+            );
+            state.status = Status::Aborting;
+            parked.push(tx);
+        }
+        self.release();
+        true
+    }
+
+    /// Returns parked transactions to the queue, one incarnation on, and pulls
+    /// `execution_idx` back so they are picked up.
+    fn resume(&self, parked: Vec<TxIdx>) {
+        let Some(&lowest) = parked.iter().min() else {
+            return;
+        };
+        for tx in parked {
+            self.set_ready(tx);
+        }
+        if self.execution_idx.fetch_min(lowest, SeqCst) > lowest {
+            self.decrease_count.fetch_add(1, SeqCst);
+        }
+    }
+
     /// Drives one worker until the block is done.
     ///
     /// `execute` runs a version and reports whether it wrote a location its
@@ -264,20 +332,36 @@ impl Coordinator {
     /// reads still hold. The abort protocol — a failed validation aborts only if
     /// it wins [`Coordinator::try_validation_abort`] — lives here, once, rather
     /// than in every caller.
+    ///
+    /// `on_abort` runs after a failed validation wins the abort and before the
+    /// transaction is re-queued: the moment to mark its writes as estimates.
     pub fn run_worker(
         &self,
-        mut execute: impl FnMut(Version) -> bool,
+        mut execute: impl FnMut(Version) -> Execution,
         mut validate: impl FnMut(Version) -> bool,
+        mut on_abort: impl FnMut(Version),
     ) {
         let mut task = None;
         while !self.done() {
             task = match task.take().or_else(|| self.next_task()) {
-                Some(Task::Execute(v)) => {
-                    let wrote_new = execute(v);
-                    self.finish_execution(v, wrote_new)
-                }
+                Some(Task::Execute(v)) => match execute(v) {
+                    Execution::Done { wrote_new_location } => {
+                        self.finish_execution(v, wrote_new_location)
+                    }
+                    // Parked, or — if the blocker finished meanwhile — retried.
+                    Execution::Blocked { on } => {
+                        if self.add_dependency(v.tx, on) {
+                            None
+                        } else {
+                            Some(Task::Execute(v))
+                        }
+                    }
+                },
                 Some(Task::Validate(v)) => {
                     let aborted = !validate(v) && self.try_validation_abort(v);
+                    if aborted {
+                        on_abort(v);
+                    }
                     self.finish_validation(v, aborted)
                 }
                 None => {
@@ -335,6 +419,12 @@ impl Coordinator {
             .expect("transaction state lock poisoned")
     }
 
+    fn dependents(&self, idx: TxIdx) -> MutexGuard<'_, Vec<TxIdx>> {
+        self.dependents[idx]
+            .lock()
+            .expect("dependents lock poisoned")
+    }
+
     /// Final status and incarnation of a transaction. For tests and statistics.
     pub fn status(&self, idx: TxIdx) -> (Status, Incarnation) {
         let tx = self.tx(idx);
@@ -375,12 +465,38 @@ mod tests {
     struct Oracle {
         seed: u64,
         max_aborts: u32,
+        /// Fabricate dependency blocks as well as validation failures.
+        blocking: bool,
     }
 
     impl Oracle {
+        fn new(seed: u64, max_aborts: u32) -> Self {
+            Self {
+                seed,
+                max_aborts,
+                blocking: false,
+            }
+        }
+        fn blocking(seed: u64, max_aborts: u32) -> Self {
+            Self {
+                seed,
+                max_aborts,
+                blocking: true,
+            }
+        }
         /// Incarnations of `tx` that fail validation before one passes.
         fn aborts(&self, tx: TxIdx) -> u32 {
             (mix(self.seed ^ tx as u64) % (self.max_aborts as u64 + 1)) as u32
+        }
+        /// Whether this version's execution reads an ESTIMATE left by the
+        /// transaction before it — only while that transaction is unfinished,
+        /// as a real store behaves. Otherwise a retry after add_dependency
+        /// returned false would block again forever.
+        fn blocks_on(&self, v: Version, c: &Coordinator) -> Option<TxIdx> {
+            let designated = self.blocking
+                && v.tx > 0
+                && mix(self.seed ^ 0xb10c ^ v.tx as u64).is_multiple_of(3);
+            (designated && c.status(v.tx - 1).0 != Status::Executed).then(|| v.tx - 1)
         }
         fn valid(&self, v: Version) -> bool {
             v.incarnation >= self.aborts(v.tx)
@@ -404,6 +520,9 @@ mod tests {
             at: u64,
             passed: bool,
         },
+        Blocked {
+            v: Version,
+        },
     }
 
     /// Runs a block of `len` transactions on `threads` workers.
@@ -418,12 +537,29 @@ mod tests {
                 let events = std::cell::RefCell::new(Vec::new());
                 c.run_worker(
                     |v| {
+                        if let Some(on) = oracle.blocks_on(v, &c) {
+                            events.borrow_mut().push(Event::Blocked { v });
+                            return Execution::Blocked { on };
+                        }
+                        if oracle.blocking {
+                            // A fabricated execution is otherwise instant, so a
+                            // predecessor has always finished by the time its
+                            // successor looks — and the dependency path goes
+                            // untested (dependencies_are_actually_exercised
+                            // caught exactly that). A few microseconds of work
+                            // makes neighbouring executions overlap.
+                            for _ in 0..2_000 {
+                                std::hint::spin_loop();
+                            }
+                        }
                         let wrote_new = oracle.wrote_new_location(v);
                         let at = clock.fetch_add(1, SeqCst);
                         events
                             .borrow_mut()
                             .push(Event::Executed { v, at, wrote_new });
-                        wrote_new
+                        Execution::Done {
+                            wrote_new_location: wrote_new,
+                        }
                     },
                     |v| {
                         let at = clock.fetch_add(1, SeqCst);
@@ -431,6 +567,7 @@ mod tests {
                         events.borrow_mut().push(Event::Validated { v, at, passed });
                         passed
                     },
+                    |_| {},
                 );
                 let _ = send.send(events.into_inner());
             });
@@ -493,13 +630,24 @@ mod tests {
             //    oracle lets pass, having run every incarnation before it.
             let (status, incarnation) = c.status(tx);
             assert_eq!(status, Status::Executed, "{ctx}: tx {tx} ended {status:?}");
-            assert_eq!(
-                incarnation,
-                oracle.aborts(tx),
-                "{ctx}: tx {tx} final incarnation"
-            );
+            // Parking on a dependency consumes an incarnation, as in the paper,
+            // so with dependencies the final incarnation exceeds the abort count.
+            if !oracle.blocking {
+                assert_eq!(
+                    incarnation,
+                    oracle.aborts(tx),
+                    "{ctx}: tx {tx} final incarnation"
+                );
+            }
+            // Every incarnation up to the final one ran exactly once — to
+            // completion, or until it was parked.
             let mut ran = incarnations.remove(&tx).unwrap_or_default();
+            ran.extend(events.iter().filter_map(|e| match e {
+                Event::Blocked { v } if v.tx == tx => Some(v.incarnation),
+                _ => None,
+            }));
             ran.sort_unstable();
+            ran.dedup();
             assert_eq!(
                 ran,
                 (0..=incarnation).collect::<Vec<_>>(),
@@ -601,10 +749,7 @@ mod tests {
 
     #[test]
     fn single_thread_without_aborts_executes_each_transaction_once() {
-        let oracle = Oracle {
-            seed: 1,
-            max_aborts: 0,
-        };
+        let oracle = Oracle::new(1, 0);
         let (_, events) = run(50, 1, oracle);
         let executions = events
             .iter()
@@ -618,14 +763,7 @@ mod tests {
     fn single_transaction() {
         for max_aborts in [0, 3] {
             for threads in [1, 4] {
-                check(
-                    1,
-                    threads,
-                    Oracle {
-                        seed: 9,
-                        max_aborts,
-                    },
-                );
+                check(1, threads, Oracle::new(9, max_aborts));
             }
         }
     }
@@ -651,14 +789,7 @@ mod tests {
     fn stress_without_aborts() {
         for seed in 0..20 {
             for threads in [2, 4, 8, 16] {
-                check(
-                    300,
-                    threads,
-                    Oracle {
-                        seed,
-                        max_aborts: 0,
-                    },
-                );
+                check(300, threads, Oracle::new(seed, 0));
             }
         }
     }
@@ -668,7 +799,7 @@ mod tests {
         for seed in 0..40 {
             for threads in [2, 4, 8, 16] {
                 for max_aborts in [1, 3] {
-                    check(200, threads, Oracle { seed, max_aborts });
+                    check(200, threads, Oracle::new(seed, max_aborts));
                 }
             }
         }
@@ -679,14 +810,35 @@ mod tests {
     #[test]
     fn heavy_oversubscription() {
         for seed in 0..200 {
-            check(
-                7,
-                16,
-                Oracle {
-                    seed,
-                    max_aborts: 2,
-                },
-            );
+            check(7, 16, Oracle::new(seed, 2));
         }
+    }
+
+    /// Dependencies on top of aborts: about a third of transactions block on
+    /// an unfinished predecessor, are parked, and must be resumed when it
+    /// completes — including the race where it finishes between the read and
+    /// the parking, which add_dependency must turn into an immediate retry.
+    #[test]
+    fn stress_with_dependencies() {
+        for seed in 0..40 {
+            for threads in [2, 4, 8, 16] {
+                for max_aborts in [0, 2] {
+                    check(200, threads, Oracle::blocking(seed, max_aborts));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn dependencies_are_actually_exercised() {
+        let (_, events) = run(300, 8, Oracle::blocking(3, 1));
+        let blocked = events
+            .iter()
+            .filter(|e| matches!(e, Event::Blocked { .. }))
+            .count();
+        assert!(
+            blocked > 10,
+            "only {blocked} blocks: the dependency path is not being tested"
+        );
     }
 }

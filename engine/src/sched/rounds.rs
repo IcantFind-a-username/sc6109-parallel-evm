@@ -40,7 +40,6 @@ use crate::state::BaseState;
 use crate::types::{Incarnation, ReadSet, TxIdx};
 use rayon::prelude::*;
 use revm::context::TxEnv;
-use revm::primitives::TxKind;
 use std::time::Instant;
 
 /// Round-based optimistic scheduler.
@@ -78,13 +77,7 @@ impl Scheduler for RoundScheduler {
     ) -> BlockOutcome {
         let n = txs.len();
         let beneficiary = config.block.beneficiary;
-        for (i, tx) in txs.iter().enumerate() {
-            assert!(
-                tx.caller != beneficiary && tx.kind != TxKind::Call(beneficiary),
-                "tx {i} sends from or to the block beneficiary; the exemption (D4) assumes \
-                 transactions only ever pay it"
-            );
-        }
+        super::assert_beneficiary_only_paid(txs, beneficiary);
 
         // Explicit pool size, never rayon's default: the thread count is an
         // experimental variable and must be exactly what the result file says.

@@ -32,7 +32,9 @@ pub mod workload;
 
 pub use diff::{assert_agree, compare, Comparison};
 pub use outcome::{AccountSummary, BlockOutcome, ExecStats, StateSnapshot};
-pub use sched::{RoundScheduler, Scheduler, SchedulerConfig, SequentialScheduler};
+pub use sched::{
+    BlockStmScheduler, RoundScheduler, Scheduler, SchedulerConfig, SequentialScheduler,
+};
 pub use state::{BaseState, ReadRecorder, SimpleState, SimpleView, StateError, StateView};
 pub use types::{Granularity, Incarnation, Key, ReadOrigin, ReadSet, TxIdx, Version};
 pub use workload::{Distribution, TransferConfig, TransferWorkload, Workload};

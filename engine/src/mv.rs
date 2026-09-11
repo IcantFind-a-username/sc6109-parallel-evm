@@ -11,9 +11,11 @@
 //!
 //! - Slot granularity only. Account granularity is refused at construction;
 //!   see [`MVMemory::new`] for why.
-//! - No `ESTIMATE` markers. Round-based execution never reads a location while
-//!   its writer is mid-abort, so the marker has no job yet. It arrives with the
-//!   collaborative scheduler in M2b.
+//! - `ESTIMATE` markers exist for the collaborative scheduler (M2b): an
+//!   aborted transaction's writes are marked rather than removed, and a reader
+//!   that reaches one is told which transaction to wait for instead of reading
+//!   a value about to change. The round-based scheduler never marks, so never
+//!   meets one.
 //! - No account creation or self-destruct inside the block. Refused loudly
 //!   rather than mishandled; see `docs/DESIGN.md` section 6.
 
@@ -42,21 +44,17 @@ enum Value {
 struct Entry {
     incarnation: Incarnation,
     value: Value,
+    /// The writer was aborted and will rewrite this location. Its value is
+    /// kept only until the rewrite; nobody may read it.
+    estimate: bool,
 }
 
 /// Result of resolving a location for a reader.
 enum Resolved {
     Base,
     Written(Version, Value),
-}
-
-impl Resolved {
-    fn origin(&self) -> ReadOrigin {
-        match self {
-            Resolved::Base => ReadOrigin::Base,
-            Resolved::Written(v, _) => ReadOrigin::Written(*v),
-        }
-    }
+    /// The latest earlier write is an `ESTIMATE` by this transaction.
+    Dependency(TxIdx),
 }
 
 /// The multi-version store shared by every worker.
@@ -106,6 +104,7 @@ impl MVMemory {
             return Resolved::Base;
         };
         match versions.range(..tx).next_back() {
+            Some((&writer, entry)) if entry.estimate => Resolved::Dependency(writer),
             Some((&writer, entry)) => {
                 Resolved::Written(Version::new(writer, entry.incarnation), entry.value.clone())
             }
@@ -204,10 +203,28 @@ impl MVMemory {
     }
 
     fn insert(&self, key: Key, tx: TxIdx, incarnation: Incarnation, value: Value) {
-        self.data
-            .entry(key)
-            .or_default()
-            .insert(tx, Entry { incarnation, value });
+        self.data.entry(key).or_default().insert(
+            tx,
+            Entry {
+                incarnation,
+                value,
+                estimate: false,
+            },
+        );
+    }
+
+    /// Marks every location `tx` wrote in its latest incarnation as an
+    /// `ESTIMATE`, on abort. Readers that reach one wait for `tx` rather than
+    /// read a value it is about to change; validators that reach one fail. The
+    /// marks are replaced, or retracted, by `tx`'s next `apply`.
+    pub fn mark_estimates(&self, tx: TxIdx) {
+        for key in self.last_writes[tx].lock().expect("writes lock").iter() {
+            if let Some(mut versions) = self.data.get_mut(key) {
+                if let Some(entry) = versions.get_mut(&tx) {
+                    entry.estimate = true;
+                }
+            }
+        }
     }
 
     /// How much a transaction added to the beneficiary's balance.
@@ -242,7 +259,12 @@ impl MVMemory {
             if *key == Key::Basic(self.beneficiary) {
                 return true;
             }
-            self.resolve(key, tx).origin() == *recorded
+            match self.resolve(key, tx) {
+                Resolved::Base => *recorded == ReadOrigin::Base,
+                Resolved::Written(v, _) => *recorded == ReadOrigin::Written(v),
+                // What was read is about to be rewritten: stale by definition.
+                Resolved::Dependency(_) => false,
+            }
         })
     }
 
@@ -259,9 +281,15 @@ impl MVMemory {
             base.slots().map(|(k, v)| (*k, *v)).collect();
 
         for item in self.data.iter() {
-            let Some((_, entry)) = item.value().iter().next_back() else {
+            let Some((&writer, entry)) = item.value().iter().next_back() else {
                 continue;
             };
+            assert!(
+                !entry.estimate,
+                "snapshot taken with an ESTIMATE at {:?} from transaction {writer}: the block \
+                 is not finished",
+                item.key()
+            );
             match (item.key(), &entry.value) {
                 (Key::Basic(address), Value::Account(info)) => match info {
                     Some(info) => {
@@ -334,6 +362,7 @@ impl StateView for MVView<'_> {
             return self.base.basic(address);
         }
         match self.mv.resolve(&Key::Basic(address), self.tx) {
+            Resolved::Dependency(on) => Err(StateError::Blocked { on }),
             Resolved::Base => self.base.basic(address),
             Resolved::Written(version, Value::Account(info)) => {
                 Ok((info, ReadOrigin::Written(version)))
@@ -355,6 +384,7 @@ impl StateView for MVView<'_> {
         index: StorageKey,
     ) -> Result<(StorageValue, ReadOrigin), Self::Error> {
         match self.mv.resolve(&Key::Storage(address, index), self.tx) {
+            Resolved::Dependency(on) => Err(StateError::Blocked { on }),
             Resolved::Base => self.base.storage(address, index),
             Resolved::Written(version, Value::Slot(value)) => {
                 Ok((value, ReadOrigin::Written(version)))
@@ -728,5 +758,65 @@ mod tests {
             ),
             "shrinking is not new"
         );
+    }
+
+    #[test]
+    fn estimate_blocks_readers_and_fails_validators() {
+        let (m, base) = (mv(3), BaseState::new());
+        m.apply(
+            0,
+            0,
+            Some(&writes(vec![(A, touched(5, &[(7, 0, 9)]))])),
+            &served(),
+            &base,
+        );
+        let mut reads = ReadSet::new();
+        reads.record(Key::Basic(A), ReadOrigin::Written(Version::new(0, 0)));
+        assert!(m.validate(1, &reads));
+
+        m.mark_estimates(0);
+        let view = MVView::new(&m, &base, 1);
+        assert_eq!(view.basic(A).unwrap_err(), StateError::Blocked { on: 0 });
+        assert_eq!(
+            view.storage(A, StorageKey::from(7)).unwrap_err(),
+            StateError::Blocked { on: 0 }
+        );
+        assert!(
+            !m.validate(1, &reads),
+            "a read of an ESTIMATE must fail validation"
+        );
+
+        // Re-execution replaces the marks; a location no longer written is retracted.
+        m.apply(
+            0,
+            1,
+            Some(&writes(vec![(A, touched(6, &[]))])),
+            &served(),
+            &base,
+        );
+        let view = MVView::new(&m, &base, 1);
+        assert_eq!(
+            view.basic(A).unwrap().1,
+            ReadOrigin::Written(Version::new(0, 1))
+        );
+        assert_eq!(
+            view.storage(A, StorageKey::from(7)).unwrap().1,
+            ReadOrigin::Base
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "ESTIMATE")]
+    fn snapshot_refuses_unfinished_block() {
+        let (m, base) = (mv(1), BaseState::new());
+        m.apply(
+            0,
+            0,
+            Some(&writes(vec![(A, touched(5, &[]))])),
+            &served(),
+            &base,
+        );
+        m.mark_estimates(0);
+        m.snapshot(&base);
     }
 }

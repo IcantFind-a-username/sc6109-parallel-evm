@@ -454,6 +454,48 @@ through a build script (would make solc a build dependency of the engine).
 
 ---
 
+## D21 — Dependency waiting parks tasks; no spinning, no condition variables · 2026-09-12
+
+**Decided by:** Claude (delegated)
+**Status:** accepted, implemented
+
+A transaction whose read hits an `ESTIMATE` is parked in the blocking
+transaction's dependents list and holds no task. When the blocker next finishes
+executing, its dependents are set ready one incarnation on and
+`execution_idx` is pulled back to the lowest of them. This is the Block-STM
+paper's mechanism.
+
+**Why.** It needs no waiting primitive at all: a parked transaction is simply
+not in the queue, and workers keep taking other tasks. Correctness rests on one
+ordering, argued in the code and checked by mutation — the blocker's status is
+set to `Executed` before its dependents are taken, and `add_dependency` checks
+that status under the dependents lock, so a transaction cannot park after the
+list was taken (M7: removing the check loses the wakeup and a transaction ends
+parked forever).
+
+**Rejected.** Spinning on the blocker's status — burns a core per waiting
+transaction, and with more waiters than cores, stalls. A condition variable per
+transaction — blocks a worker thread that could be doing other tasks. A
+lock-free queue — no benefit at this scale for considerably harder reasoning.
+
+---
+
+## D22 — Block-STM's termination backstop: n² + 16n executions · 2026-09-12
+
+**Decided by:** Claude (delegated)
+**Status:** accepted, implemented
+
+The scheduler panics if total executions exceed n² + 16n (at least 1024).
+
+**Why.** There is no proven constant bound to assert, unlike the round
+scheduler's n rounds (coordinator docs). Without a backstop, a store
+inconsistency is a benchmark that never finishes (E8). Quadratic is far above
+any correct run; it is a tripwire, and documented as one rather than as a bound.
+
+**Rejected.** A wall-clock timeout — makes correctness depend on machine speed.
+
+---
+
 ## Open
 
 Decisions not yet made. Move them above when settled.

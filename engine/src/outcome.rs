@@ -96,6 +96,12 @@ pub struct ExecStats {
     /// Transactions that reverted or halted. A reverted transaction is a
     /// successful execution with a failed outcome, not an abort.
     pub reverted: usize,
+    /// Executions that stopped at an `ESTIMATE` and were parked (Block-STM
+    /// only). Not counted in `executions`.
+    pub dependency_waits: usize,
+    /// Executions the EVM refused mid-flight because of a stale read — E6's
+    /// case — and that validation then sent back. Zero for sequential.
+    pub speculative_refusals: usize,
     /// Threads the scheduler was configured with.
     pub threads: usize,
     /// Execute-then-validate passes over the block. Always 1 for sequential;

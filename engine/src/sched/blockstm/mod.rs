@@ -7,10 +7,10 @@
 //! 3. Real execution and validation wired to the coordinator.
 //! 4. The M2b gate and the comparison against the M2a baseline.
 //!
-//! Only step 1 exists so far. Nothing here is used by a [`Scheduler`] yet.
-//!
-//! [`Scheduler`]: crate::sched::Scheduler
+//! [`BlockStmScheduler`] is the result.
 
 pub mod coordinator;
+pub mod scheduler;
 
-pub use coordinator::{Coordinator, Status, Task};
+pub use coordinator::{Coordinator, Execution, Status, Task};
+pub use scheduler::BlockStmScheduler;
