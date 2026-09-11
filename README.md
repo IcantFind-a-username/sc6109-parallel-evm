@@ -70,9 +70,20 @@ This is an independent implementation following the
 [RISE's `pevm`](https://github.com/risechain/pevm) or any other existing
 Rust Block-STM implementation.
 
+## Documentation
+
+| Doc | Contents |
+| --- | --- |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | Milestones, gates, ownership, scope-cut order |
+| [docs/DESIGN.md](docs/DESIGN.md) | Architecture, revm binding, multi-version memory, determinism argument |
+| [docs/EXPERIMENTS.md](docs/EXPERIMENTS.md) | Workloads, metrics, figures, measurement hygiene |
+| [docs/RISKS.md](docs/RISKS.md) | Ranked risks with symptoms and mitigations |
+| [docs/AI_USAGE.md](docs/AI_USAGE.md) | AI usage log (graded deliverable) |
+
 ## Status
 
-Planning. No implementation yet.
+Planning. No implementation yet. Next milestone is M0 (skeleton runs) — see
+[docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Layout (planned)
 
