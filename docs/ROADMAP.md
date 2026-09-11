@@ -124,8 +124,8 @@ count, and speedup × conflict rate.
 ## M4 — Report, slides, video · by **2026-10-25**
 
 - [x] Report written, including the negative result as a first-class finding (`docs/REPORT.md`)
-- [ ] Slides
-- [ ] 10-minute video recorded
+- [x] Slides (`docs/SC6109_parallel_evm.pptx`, 14 slides with speaker notes)
+- [ ] 10-minute video recorded — script with timings in `docs/VIDEO_SCRIPT.md`
 - [ ] `docs/AI_USAGE.md` complete and honest
 - [x] README updated with actual results and how to reproduce them
 

@@ -31,3 +31,9 @@ venv/
 # Course material at repo root — not ours to redistribute
 # (scoped to root so docs/*.pdf deliverables still track)
 /*.pdf
+
+# Slide tooling
+scripts/slides/node_modules/
+scripts/slides/package*.json
+scripts/slides/qa.json
+scripts/slides/preview/

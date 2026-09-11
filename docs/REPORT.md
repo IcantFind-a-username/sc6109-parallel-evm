@@ -345,7 +345,7 @@ matter how independent the block is.
 
 Round-based execution confirms at least one more transaction per round and
 re-runs everything above it, so on a chain its work is quadratic: 191 executions
-per transaction on Zipf 2.0 transfers, 246 on NFT mint and AMM. Block-STM parks
+per transaction on Zipf 2.0 transfers, 247 on NFT mint and 246 on the AMM pool. Block-STM parks
 a transaction that reads an aborted write until the writer finishes, instead of
 letting it run on a value about to change; it executes each transaction 1.6–1.9
 times on the same chains. At low density the two are indistinguishable (1.0–1.4
