@@ -1,0 +1,28 @@
+# Rust
+/target/
+**/*.rs.bk
+*.pdb
+
+# Foundry / Solidity
+/contracts/out/
+/contracts/cache/
+/contracts/broadcast/
+/contracts/lib/
+
+# Benchmark output
+/results/*.csv
+/results/*.json
+/figures/*.png
+/figures/*.pdf
+
+# Python (plotting)
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
