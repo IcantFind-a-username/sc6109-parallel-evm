@@ -22,10 +22,12 @@ milestone until the current gate is green.
 
 Get one transaction through a real EVM and one contract compiled. Nothing else.
 
-- [ ] Rust workspace created, `revm` pinned to an exact version in `Cargo.toml`
+- [x] Rust workspace created, `revm` pinned to an exact version in `Cargo.toml`
 - [ ] Foundry project under `contracts/`, `forge build` produces bytecode
-- [ ] A single ERC-20 `transfer` executes through `revm` against an in-memory DB
-- [ ] CI runs `cargo test` and `forge build` on push
+- [x] A value transfer executes through `revm` against our own state stack
+      (ERC-20 pending Foundry)
+- [x] CI runs `cargo fmt`, `clippy -D warnings` and `cargo test` on push
+      (`forge build` pending Foundry)
 
 **Gate:** `cargo run --bin demo` prints a post-transfer balance that is
 arithmetically correct.
@@ -40,10 +42,11 @@ arithmetically correct.
 This is the most important milestone in the project. Everything after it is
 addition; if this slips, replan the scope rather than the gate.
 
-- [ ] `SequentialExecutor` runs an arbitrary batch of transactions
-- [ ] State store with account-level and slot-level access
-- [ ] Workload generator emits a reproducible batch from a seed
-- [ ] **Differential test harness** — compares two executors slot-for-slot
+- [x] `SequentialExecutor` runs an arbitrary batch of transactions
+- [x] State store with account-level and slot-level access
+- [x] Workload generator emits a reproducible batch from a seed (transfers;
+      ERC-20 pending Foundry)
+- [x] **Differential test harness** — compares two executors slot-for-slot
 - [ ] **Anvil cross-validation** — same batch replayed serially on Anvil,
       balances and storage compared against our engine
 

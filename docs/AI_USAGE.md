@@ -43,6 +43,7 @@ Append rows. Do not edit history.
 | 2026-09-11 | — | Claude Code | Decide whether to integrate revm's EIP-7928 BAL support | Split: reframing and derived access sets adopted, canonical BAL output deferred | Delegated by the user on grading grounds. Reasoning in D12 — the brief does not require access lists, and the integration would land in the week the figures are produced |
 | 2026-09-11 | — | Claude Code | Write the M0 smoke test against revm 41 | Compiled and ran correctly first attempt | Extended it to test R2 empirically rather than trusting the documented claim — see bug evidence below |
 | 2026-09-11 | — | Claude Code | Implement the state-access stack (`types`, `StateView`, `BaseState`, `ReadRecorder`, `SimpleState`) | Implemented on `feat/state-view`, 17 tests passing | D9 was found to be unimplementable as specified and was revised before coding, not worked around silently — see E3 |
+| 2026-09-11 | — | Claude Code | Implement the sequential scheduler, workload generator and differential harness | Implemented, 27 tests passing | A generated-workload bug (E5) was caught by a semantic assertion, not by a crash; it would otherwise have contaminated every measurement |
 
 ---
 
@@ -152,6 +153,40 @@ works.
 must carry increasing nonces. Getting this wrong fails an entire batch loudly
 rather than producing a subtly wrong result, which is the better failure mode,
 but the generator must handle it.
+
+---
+
+### E5 — Generated accounts collided with the precompile address range · 2026-09-11
+
+**Bug:** 45 of 300 transfers in a generated workload halted with
+`OutOfGas(Precompile)` instead of moving value.
+
+**Where:** `engine/src/workload/transfer.rs`, `account_address`.
+
+**Origin:** the generator addressed account `i` as `i + 1`, which puts the first
+accounts at `0x01` through `0x0a` — ecrecover, sha256, ripemd160, identity, the
+BN254 and BLS operations, KZG point evaluation.
+
+**How it was caught:** a test asserting that funded transfers never revert.
+The assertion failed at 45, and the halt reason named the cause directly.
+
+**Root cause:** a transfer to a precompile does not move value; it *invokes* the
+precompile. With a 21000-gas limit and no input, the call halts out of gas.
+
+**Why this one matters more than it looks.** The block still executed. Every
+affected transaction committed a nonce and a fee, so nothing crashed and the
+throughput numbers looked entirely reasonable — roughly 15% of the workload was
+quietly doing something other than what it claimed. Had the "must not revert"
+assertion not been written, this would have contaminated every measurement in
+the project, and the contamination would have been invisible in the figures.
+
+**Fix:** generated addresses now carry a `0xA1` leading byte, placing them far
+outside the precompile range, and `generated_addresses_avoid_precompiles`
+asserts it for every account, sender and recipient in a workload.
+
+**Generalisation worth carrying forward:** assert on *semantic* outcomes, not
+just on absence of crashes. "It ran" and "it did what I meant" are different
+claims, and only the second one is worth measuring.
 
 ---
 

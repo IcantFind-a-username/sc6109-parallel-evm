@@ -41,7 +41,8 @@ this is the second reason the revm version is pinned (see R4).
 **What happens.** Gas fees are paid to the block beneficiary on every
 transaction, so every transaction writes one shared account.
 
-**Confirmed empirically in M0** (`engine/src/bin/smoke.rs`). A single value
+**Confirmed empirically in M0**, and asserted in
+`engine/tests/stack_integration.rs::beneficiary_is_written_even_at_zero_gas_price`. A single value
 transfer touches three accounts: sender, recipient, and beneficiary. The
 beneficiary appears in the write set **even at `gas_price = 0`** — so this is
 not a fees-only effect, it is unconditional. Every transaction in a block writes

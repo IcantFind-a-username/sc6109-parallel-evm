@@ -72,7 +72,7 @@ All cargo commands run from `engine/`.
 
 ```
 cargo test                    # unit + differential tests
-cargo run --bin smoke         # M0: revm binding + R2 demonstration
+cargo run --release --bin demo   # run a generated block through the sequential baseline
 ```
 
 ## Do not

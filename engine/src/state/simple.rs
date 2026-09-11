@@ -103,6 +103,25 @@ impl SimpleState {
     pub fn base(&self) -> &BaseState {
         &self.base
     }
+
+    /// Accounts this block has written. Used to build a snapshot that covers
+    /// the same address space as any other engine's.
+    pub fn touched_accounts(&self) -> impl Iterator<Item = Address> + '_ {
+        self.accounts.keys().copied()
+    }
+
+    /// Every slot either present in the base snapshot or written by this block.
+    pub fn touched_slots(&self) -> Vec<(Address, StorageKey)> {
+        let mut keys: Vec<(Address, StorageKey)> = self
+            .base
+            .slots()
+            .map(|(k, _)| *k)
+            .chain(self.storage.keys().copied())
+            .collect();
+        keys.sort_unstable();
+        keys.dedup();
+        keys
+    }
 }
 
 /// A borrowed, read-only view of [`SimpleState`].

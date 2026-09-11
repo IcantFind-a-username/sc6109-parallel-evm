@@ -7,8 +7,17 @@
 //! See `docs/DESIGN.md` for the architecture and `DECISIONS.md` for why it is
 //! shaped this way.
 
+pub mod diff;
+pub mod exec;
+pub mod outcome;
+pub mod sched;
 pub mod state;
 pub mod types;
+pub mod workload;
 
+pub use diff::{assert_agree, compare, Comparison};
+pub use outcome::{AccountSummary, BlockOutcome, ExecStats, StateSnapshot};
+pub use sched::{Scheduler, SchedulerConfig, SequentialScheduler};
 pub use state::{BaseState, ReadRecorder, SimpleState, SimpleView, StateError, StateView};
 pub use types::{Granularity, Incarnation, Key, ReadOrigin, ReadSet, TxIdx, Version};
+pub use workload::{Distribution, TransferConfig, TransferWorkload, Workload};
