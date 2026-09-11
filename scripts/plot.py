@@ -134,7 +134,7 @@ def fig2(rows):
     b.set_xlabel("measured dependency density — fraction of transactions reading an earlier write")
     b.set_title("…and aborts rise with it (the static scheduler never aborts)", loc="left")
     b.set_ylim(0, 1.02)
-    a.legend(loc="lower left")
+    a.legend(loc="upper center", bbox_to_anchor=(0.5, -0.04), ncol=3)
     fig.tight_layout()
     save(fig, "fig2_speedup_by_density.png")
 
@@ -173,6 +173,9 @@ def fig3(rows):
         ax.plot(*zip(*pts), color=color, marker=marker, label=name, zorder=3,
                 markeredgecolor=SURFACE, markeredgewidth=1.5)
     ax.set_xscale("log")
+    ticks = [1, 2, 5, 10, 20, 50, 100]
+    ax.set_xticks(ticks, [str(t) for t in ticks])
+    ax.minorticks_off()
     ax.set_xlabel("sequential time per transaction, µs (log) — sha256 payload 0 B to 32 KB")
     ax.set_ylabel("speedup over sequential")
     ax.set_title("Parallelism pays only once transactions do real work (6 threads, low conflict)", loc="left")
@@ -249,7 +252,9 @@ def fig6(rows):
         ax.set_title(f"{w} {p}", loc="left")
         ax.set_xlabel("transactions per block (log)")
     axes[0].set_ylabel("speedup at 6 threads")
-    fig.tight_layout(rect=(0, 0.08, 1, 1))
+    fig.suptitle("Block size: bigger blocks amortise overhead — until memory does not",
+                 x=0.01, ha="left", fontsize=12, fontweight="semibold", color=INK)
+    fig.tight_layout(rect=(0, 0.08, 1, 0.94))
     legend_below(fig, axes[0], 2)
     save(fig, "fig6_block_size.png")
 
@@ -277,7 +282,7 @@ def fig7():
         ax.grid(axis="y", visible=False)
     b.set_yticklabels([])
     a.set_xlabel("sequential block time, ms")
-    b.set_xlabel("Block-STM speedup at 6 threads (each against its own sequential)")
+    b.set_xlabel("Block-STM speedup, 6 threads")
     a.set_title("Absolute cost", loc="left")
     b.set_title("Scaling", loc="left")
     fig.suptitle("The allocator is an experimental condition (D15)", x=0.01, ha="left",

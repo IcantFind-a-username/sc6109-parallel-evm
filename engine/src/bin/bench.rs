@@ -101,6 +101,14 @@ fn compute(payload: usize, n: usize) -> Cell {
 }
 
 fn contract(kind: ContractKind, accounts: usize, n: usize) -> Cell {
+    let label = kind.label();
+    let param = label.split_once('-').map_or("", |(_, p)| p).to_string();
+    contract_as(kind, accounts, n, &param)
+}
+
+/// A contract workload under an explicit parameter label, for cells that
+/// differ only in account ratio.
+fn contract_as(kind: ContractKind, accounts: usize, n: usize, param: &str) -> Cell {
     let w = ContractWorkload::generate(
         &ContractConfig {
             kind,
@@ -110,7 +118,7 @@ fn contract(kind: ContractKind, accounts: usize, n: usize) -> Cell {
         SEED,
     );
     let label = kind.label();
-    let (family, param) = label.split_once('-').unwrap_or((&label, ""));
+    let family = label.split_once('-').map_or(label.as_str(), |(f, _)| f);
     let family: &'static str = Box::leak(family.to_string().into_boxed_str());
     cell(w, family, param, accounts)
 }
@@ -119,8 +127,18 @@ fn contract(kind: ContractKind, accounts: usize, n: usize) -> Cell {
 /// contracts) and the work-per-transaction axis (compute).
 fn main_cells() -> Vec<Cell> {
     let n = BLOCK;
+    let erc20 = ContractKind::Erc20 {
+        recipients: Distribution::Uniform,
+    };
     vec![
+        // Uniform recipients across account-to-block ratios r = 100, 10, 4, 2, 1:
+        // expected density 1 - (1 - e^(-4/r)) / (4/r), about 0.02, 0.18, 0.37,
+        // 0.57 and 0.75, so Figure 2's x-axis has no gap between sparse and
+        // dense (the first sweep had one from 0.02 to 0.75).
         transfer(100 * n, Distribution::Uniform, n, "uniform-sparse"),
+        transfer(10 * n, Distribution::Uniform, n, "uniform-r10"),
+        transfer(4 * n, Distribution::Uniform, n, "uniform-r4"),
+        transfer(2 * n, Distribution::Uniform, n, "uniform-r2"),
         transfer(n, Distribution::Uniform, n, "uniform-dense"),
         transfer(n, Distribution::Zipf { s: 0.8 }, n, "zipf0.8"),
         transfer(n, Distribution::Zipf { s: 1.2 }, n, "zipf1.2"),
@@ -129,13 +147,12 @@ fn main_cells() -> Vec<Cell> {
         compute(1_024, n),
         compute(8_192, n),
         compute(32_768, n),
-        contract(
-            ContractKind::Erc20 {
-                recipients: Distribution::Uniform,
-            },
-            100 * n,
-            n,
-        ),
+        // The same ratios for ERC-20: the same dependency structure as the
+        // transfers above, more work per transaction.
+        contract(erc20, 100 * n, n),
+        contract_as(erc20, 10 * n, n, "uniform-r10"),
+        contract_as(erc20, 4 * n, n, "uniform-r4"),
+        contract_as(erc20, 2 * n, n, "uniform-r2"),
         contract(
             ContractKind::Erc20 {
                 recipients: Distribution::Zipf { s: 1.2 },
