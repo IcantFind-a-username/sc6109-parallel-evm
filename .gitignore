@@ -9,9 +9,10 @@ target/
 /contracts/broadcast/
 /contracts/lib/
 
-# Benchmark output
-/results/*.csv
-/results/*.json
+# Benchmark output. Raw results under results/ ARE committed, with their
+# metadata alongside (EXPERIMENTS.md section 6: "commit raw CSV, not just
+# figures"). Figures are regenerable and are not.
+/results/scratch/
 /figures/*.png
 /figures/*.pdf
 

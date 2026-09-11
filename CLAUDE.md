@@ -71,8 +71,10 @@ Filled in as they come to exist.
 All cargo commands run from `engine/`.
 
 ```
-cargo test                    # unit + differential tests
-cargo run --release --bin demo   # run a generated block through the sequential baseline
+cargo test                                         # unit + differential tests
+cargo test --release -- --ignored                  # full 1000-seed gate sweeps
+cargo run --release --bin demo                     # one block through the sequential baseline
+cargo run --release --bin bench -- m2a-baseline    # M2a control table -> results/
 ```
 
 ## Do not

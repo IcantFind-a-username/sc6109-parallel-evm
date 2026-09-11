@@ -11,8 +11,12 @@
 //! machine, any platform, any version. A benchmark number whose input cannot be
 //! regenerated is not a measurement.
 
+pub mod analysis;
+pub mod compute;
 pub mod transfer;
 
+pub use analysis::{analyse, DependencyProfile};
+pub use compute::{ComputeConfig, ComputeWorkload};
 pub use transfer::{is_outside_precompile_range, Distribution, TransferConfig, TransferWorkload};
 
 use crate::state::BaseState;

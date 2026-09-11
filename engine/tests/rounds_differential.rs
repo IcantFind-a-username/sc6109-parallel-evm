@@ -7,7 +7,9 @@
 //! `cargo test --release -- --ignored`.
 
 use parevm::sched::Scheduler;
-use parevm::workload::{Distribution, TransferConfig, TransferWorkload};
+use parevm::workload::{
+    ComputeConfig, ComputeWorkload, Distribution, TransferConfig, TransferWorkload,
+};
 use parevm::{assert_agree, RoundScheduler, SchedulerConfig, SequentialScheduler};
 
 const DISTRIBUTIONS: [Distribution; 4] = [
@@ -157,6 +159,36 @@ fn refuses_account_granularity() {
             ..Default::default()
         },
     );
+}
+
+/// D16's compute workload goes through the same gate as everything else.
+/// Few senders, so nonce chains are common and speculation has work to do.
+#[test]
+fn agrees_on_compute_workloads() {
+    for payload in [0, 1_024, 8_192] {
+        for seed in 0..10 {
+            let workload = ComputeWorkload::generate(
+                &ComputeConfig {
+                    accounts: 20,
+                    transactions: 80,
+                    payload,
+                },
+                seed,
+            );
+            for threads in [2, 4, 8] {
+                let config = SchedulerConfig {
+                    threads,
+                    ..Default::default()
+                };
+                assert_agree(
+                    &SequentialScheduler::new(),
+                    &RoundScheduler::new(),
+                    &workload,
+                    &config,
+                );
+            }
+        }
+    }
 }
 
 #[test]

@@ -158,7 +158,7 @@ const ACCOUNT_PREFIX: u8 = 0xA1;
 
 /// Deterministic address for account `i`, with the index in the low bytes so
 /// that failures name an account a human can find.
-fn account_address(i: usize) -> Address {
+pub(crate) fn account_address(i: usize) -> Address {
     let mut bytes = [0u8; 20];
     bytes[0] = ACCOUNT_PREFIX;
     bytes[12..20].copy_from_slice(&(i as u64 + 1).to_be_bytes());

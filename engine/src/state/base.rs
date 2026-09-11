@@ -112,3 +112,30 @@ impl StateView for BaseState {
         ))
     }
 }
+
+/// Lets a shared snapshot be handed to the EVM without cloning it — for
+/// executing a single transaction against pre-block state, as the dependency
+/// analysis tests and the access-set profiling pass (D12) do.
+impl StateView for &BaseState {
+    type Error = StateError;
+
+    fn basic(&self, address: Address) -> Result<(Option<AccountInfo>, ReadOrigin), Self::Error> {
+        (*self).basic(address)
+    }
+
+    fn code_by_hash(&self, code_hash: B256) -> Result<(Bytecode, ReadOrigin), Self::Error> {
+        (*self).code_by_hash(code_hash)
+    }
+
+    fn storage(
+        &self,
+        address: Address,
+        index: StorageKey,
+    ) -> Result<(StorageValue, ReadOrigin), Self::Error> {
+        (*self).storage(address, index)
+    }
+
+    fn block_hash(&self, number: u64) -> Result<(B256, ReadOrigin), Self::Error> {
+        (*self).block_hash(number)
+    }
+}
