@@ -49,6 +49,7 @@ Append rows. Do not edit history.
 | 2026-09-11 | user | — | Settle O5–O8 | Decided as D14–D17 | The user chose (a) for coarse granularity, adopted mimalloc, made work per transaction a variable, and moved Figure 2 to measured dependency density. Claude's recommendations were accepted on O5–O8; the user added the constraint that D14 stay off M2b's critical path |
 | 2026-09-11 | — | Claude Code | Record D14–D17, update EXPERIMENTS, install mimalloc, fix workload defaults | Done | The mimalloc feature was silently not on by default at first — see E11 |
 | 2026-09-11 | — | Claude Code | Build the dependency analysis, compute workload and bench runner; record the M2a baseline | Baseline **not committed** — 4 of 9 cells invalid | The compute rows exposed a false-conflict bug in Claude's own `MVMemory::apply` (E12). The fix changes the store's interface, so it was stopped and put to the user rather than taken |
+| 2026-09-11 | user | — | Settle O9; resequence | D18: option (A). Coordinator skeleton first, E12 fix after | Claude recommended (A) and the user agreed. The user overrode Claude's proposed order, which put the E12 fix and baseline before M2b step 1 |
 
 ---
 
@@ -424,9 +425,17 @@ change. The invalid baseline was moved to `results/scratch/` rather than
 committed as a control group.
 
 **Status:** the fix needs to know what each execution *read* for an account, to
-tell a real write from a touch. That changes the store's interface, so it is an
-open decision (O9 in `DECISIONS.md`) rather than something taken quietly. The
-baseline is re-run after it.
+tell a real write from a touch. That changes the store's interface, so it was
+put to the user as O9 rather than taken quietly. **Decided as D18**: the
+recorder keeps a side log of the account values it served, and a write is
+registered only when the post-state differs from what that execution saw. The
+user rejected re-deriving the read value from the store at apply time because it
+would couple `apply` to the component M2b rebuilds. The baseline is re-run after
+the fix.
+
+**Sequencing, by the user's call:** the fix follows M2b step 1, not precedes it.
+Step 1 does not touch the store, the baseline is only needed for the M2b
+comparison in step 4, and the step 1 draft existed only in a scratch directory.
 
 **Also fixed alongside:** the bench captured its metadata — commit, dirty flag —
 at the *end* of a multi-minute run, so any change to the tree during the run
