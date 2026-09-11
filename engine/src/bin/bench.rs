@@ -124,6 +124,10 @@ fn ms(d: Duration) -> f64 {
 
 fn m2a_baseline(out_dir: &Path) {
     std::fs::create_dir_all(out_dir).expect("create output dir");
+    // Captured before the first run, not after the last: the commit and the
+    // dirty flag must describe the code that produced the numbers, and a run
+    // takes long enough for the working tree to change underneath it.
+    let meta = metadata();
     let mut csv = String::from(
         "scheduler,workload,param,accounts,transactions,seed,threads,runs,\
          dep_density,critical_path,rounds_median,executions_median,aborts_median,\
@@ -224,7 +228,7 @@ fn m2a_baseline(out_dir: &Path) {
     }
 
     std::fs::write(out_dir.join("m2a_baseline.csv"), csv).expect("write csv");
-    std::fs::write(out_dir.join("m2a_baseline.meta.txt"), metadata()).expect("write metadata");
+    std::fs::write(out_dir.join("m2a_baseline.meta.txt"), meta).expect("write metadata");
     eprintln!("wrote {}", out_dir.join("m2a_baseline.csv").display());
 }
 

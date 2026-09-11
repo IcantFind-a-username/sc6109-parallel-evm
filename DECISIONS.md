@@ -394,3 +394,24 @@ Decisions not yet made. Move them above when settled.
   [docs/EXPERIMENTS.md](docs/EXPERIMENTS.md).
 - **O4 — Core A second seat.** `MVMemory` and the validation path should not be
   reviewed only by their author.
+- **O9 — How the store tells a write from a touch (E12).** Registering every
+  touched account as a write serialises any workload that touches a shared
+  account without changing it — every contract workload. The store needs the
+  value each execution *read* for an account, which changes its interface.
+  - *(A) The recorder keeps the account values it served.* `ReadRecorder` gains
+    a side log of the `AccountInfo` it returned for each `basic` read — beside
+    the read set, not in it; the read set's contents are unchanged. `apply`
+    registers an account write only when the post-state differs from what that
+    execution was served. Exact and race-free: it compares against what this
+    execution actually saw. Costs one `AccountInfo` clone per account read.
+  - *(B) `apply` re-derives what was read from the read set.* An origin of
+    `Base` means the base value; `Written(v)` means the store's entry for `v`,
+    if that version still exists — and if it does not, register conservatively.
+    No recorder change, but `apply` then depends on the store's state at the
+    moment it runs, coupling two correctness-critical paths.
+  - *(C) Use revm's `Account::is_changed()`.* Rejected on inspection: it relies
+    on `original_info`, which revm only maintains for BAL.
+
+  Claude's recommendation: (A). Either way, `workload::analysis` switches to the
+  same rule — trivially, since sequentially the pre-transaction value is at
+  hand — so Figure 2's x-axis and the store agree on what a write is.

@@ -48,6 +48,7 @@ Append rows. Do not edit history.
 | 2026-09-11 | — | Claude Code | Run the full M2a gate and the watchlist speedup check | Gate passed: 20,000 block comparisons agree. Speedup check failed | Diagnosed rather than tuned: the failure traced to workload design (E9) and per-transaction cost (E10), not to the scheduler. Three decisions raised for the user instead of being taken |
 | 2026-09-11 | user | — | Settle O5–O8 | Decided as D14–D17 | The user chose (a) for coarse granularity, adopted mimalloc, made work per transaction a variable, and moved Figure 2 to measured dependency density. Claude's recommendations were accepted on O5–O8; the user added the constraint that D14 stay off M2b's critical path |
 | 2026-09-11 | — | Claude Code | Record D14–D17, update EXPERIMENTS, install mimalloc, fix workload defaults | Done | The mimalloc feature was silently not on by default at first — see E11 |
+| 2026-09-11 | — | Claude Code | Build the dependency analysis, compute workload and bench runner; record the M2a baseline | Baseline **not committed** — 4 of 9 cells invalid | The compute rows exposed a false-conflict bug in Claude's own `MVMemory::apply` (E12). The fix changes the store's interface, so it was stopped and put to the user rather than taken |
 
 ---
 
@@ -381,6 +382,55 @@ judged against.
 **Generalisation:** an experimental condition that cannot be observed at run
 time cannot be trusted. Every result file records `ALLOCATOR` from the binary
 that produced it, not from what the configuration was meant to be.
+
+---
+
+### E12 — "Touched" was treated as "written" · 2026-09-11
+
+**Symptom:** in the M2a baseline, all four compute cells reported dependency
+density 1.000 and a critical path equal to the block length — every transaction
+depending on its predecessor — although senders were drawn from a million
+accounts. M2a ran 5001–9376 rounds on them, the signature of one long chain.
+
+**Where:** `MVMemory::apply` in `engine/src/mv.rs`, and the same rule copied into
+`workload::analysis`.
+
+**Root cause:** both registered **every touched account** as a write. Every
+compute transaction calls the sha256 precompile at `0x02`; the EVM marks that
+account touched but never changes it. A probe confirmed it —
+`0x…0002 touched=true info_changed=false`. So every transaction "wrote" `0x02`
+and the next one "read" it: a dependency chain through an account nobody
+modifies.
+
+**This was a rationalised choice, not an oversight.** When `apply` was written,
+registering unchanged-but-touched accounts was judged "safe, slightly
+over-conflicting". Safe it is — every run still matched sequential, and the
+bench verified each one. "Slightly" was wrong. Any account that many
+transactions touch without modifying becomes a total serialisation point. That
+describes the precompile here, and it describes **every contract workload still
+to come**: each ERC-20, NFT or AMM transaction touches the contract's account
+without changing its balance or nonce. Left in place, it would have serialised
+all of them and been reported as hot-slot contention — the project's headline
+negative result, produced by a bug.
+
+**Why revm cannot answer it:** `Account::is_changed()` compares against
+`original_info`, which revm maintains only on the BAL path; when absent it
+returns `!info.is_default()`, true for any funded account. Checked in the revm
+41 source.
+
+**What was valid:** the five transfer cells. Their only shared account is the
+beneficiary, which is already exempt (D4); senders and recipients genuinely
+change. The invalid baseline was moved to `results/scratch/` rather than
+committed as a control group.
+
+**Status:** the fix needs to know what each execution *read* for an account, to
+tell a real write from a touch. That changes the store's interface, so it is an
+open decision (O9 in `DECISIONS.md`) rather than something taken quietly. The
+baseline is re-run after it.
+
+**Also fixed alongside:** the bench captured its metadata — commit, dirty flag —
+at the *end* of a multi-minute run, so any change to the tree during the run
+would have been misattributed. It now captures them before the first run.
 
 ---
 
