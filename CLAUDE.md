@@ -60,15 +60,19 @@ the README's Status section — keep it accurate.
 - No `unwrap()` outside tests and `main`; propagate errors
 - Every `unsafe` block carries a comment justifying it (there should be none)
 - Benchmarks never run in `cargo test`; they live behind a separate binary
+- Use `tx_gas_used()`, not the deprecated `gas_used()` — revm 41 split
+  execution gas from state gas (EIP-8037), and `gas_used` is now ambiguous
 - Commit messages explain *why*, not *what* — the diff already says what
 
 ## Commands
 
 Filled in as they come to exist.
 
+All cargo commands run from `engine/`.
+
 ```
 cargo test                    # unit + differential tests
-cargo run --bin demo          # M0 smoke test
+cargo run --bin smoke         # M0: revm binding + R2 demonstration
 ```
 
 ## Do not
