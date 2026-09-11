@@ -42,6 +42,7 @@ Append rows. Do not edit history.
 | 2026-09-11 | — | Claude Code | Survey revm versions and pin one | Pinned `=41.0.0` | Reasoning recorded in D11. Chose against latest (43.0.2, two days old, prior patch yanked) |
 | 2026-09-11 | — | Claude Code | Decide whether to integrate revm's EIP-7928 BAL support | Split: reframing and derived access sets adopted, canonical BAL output deferred | Delegated by the user on grading grounds. Reasoning in D12 — the brief does not require access lists, and the integration would land in the week the figures are produced |
 | 2026-09-11 | — | Claude Code | Write the M0 smoke test against revm 41 | Compiled and ran correctly first attempt | Extended it to test R2 empirically rather than trusting the documented claim — see bug evidence below |
+| 2026-09-11 | — | Claude Code | Implement the state-access stack (`types`, `StateView`, `BaseState`, `ReadRecorder`, `SimpleState`) | Implemented on `feat/state-view`, 17 tests passing | D9 was found to be unimplementable as specified and was revised before coding, not worked around silently — see E3 |
 
 ---
 
@@ -106,6 +107,51 @@ including zero. The effect is unconditional, not fee-dependent.
 realistic fee conditions — it is required for any block to exhibit parallelism
 at all, including in a zero-fee test harness. Had this been discovered later, a
 zero-gas-price test workload would have looked like a scheduler bug.
+
+---
+
+### E3 — An accepted decision turned out to be unimplementable · 2026-09-11
+
+**Claim:** D9 specified conflict granularity as an experimental variable, with
+the fine setting separating balance reads from nonce reads.
+
+**How it was caught:** writing the `StateView` trait and asking what a read of
+an account actually returns, before implementing against the assumed shape.
+
+**Root cause:** revm's `basic_ref` hands back the entire `AccountInfo`. The
+database boundary never learns whether the EVM wanted the balance, the nonce or
+the code hash, so the two cannot be separated there. Doing it properly needs an
+`Inspector` observing opcodes — a different order of cost, and not justified by
+what the axis would buy.
+
+**Fix:** the axis was changed to slot-versus-account granularity, which is
+implementable in one key-mapping function and is the comparison the brief
+actually names. D9 carries the revision and its reasoning rather than being
+quietly rewritten. The balance/nonce limitation is documented in `types.rs` and
+goes in the report as a stated limitation.
+
+---
+
+### E4 — Test bug that confirmed the commit path · 2026-09-11
+
+**Bug:** `transfers_compose_across_transactions` failed with
+`NonceTooLow { tx: 0, state: 1 }`.
+
+**Where:** `engine/tests/stack_integration.rs`, test helper `transfer_tx`.
+
+**Root cause:** the helper always built a transaction with nonce 0, while the
+sender's nonce advanced after each commit. The defect was in the test, not the
+engine.
+
+**Why it is worth recording:** the failure is positive evidence. It could only
+occur if the nonce increment had persisted into `SimpleState` and been read back
+by the EVM through `ReadRecorder` — that is, the commit-and-read-through path
+works.
+
+**Consequence for the workload generator:** transactions from the same sender
+must carry increasing nonces. Getting this wrong fails an entire batch loudly
+rather than producing a subtly wrong result, which is the better failure mode,
+but the generator must handle it.
 
 ---
 

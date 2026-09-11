@@ -175,16 +175,26 @@ lines are what make the M1 and M2 gates mean anything.
 ## D9 — Conflict granularity is an experimental variable · 2026-09-11
 
 **Decided by:** user, on proposal
-**Status:** accepted
+**Status:** accepted, **revised the same day** — see below
 
-`Key::Basic` is account-granular by default, with a switch for finer
-balance/nonce separation. The two settings are compared as an experiment
-measuring false-conflict rate.
+Granularity is a switch comparing two conflict-detection rules, measured for
+false-conflict rate:
 
-**Why.** Account granularity produces false conflicts (tx A writes only nonce,
-tx B reads only balance). Cost to make it a variable is an enum and a flag, and
-it directly answers the brief's "conflict detection rule based on account
-access, storage slot access, or simplified read/write sets".
+- `Granularity::Slot` — one key per storage slot. Precise.
+- `Granularity::Account` — every slot of an account maps to one key. Coarse.
+
+**Why.** This is the exact axis the brief names: a conflict rule "based on
+account access, storage slot access, or simplified read/write sets". Cost is an
+enum and one key-mapping function.
+
+**Revision.** As first written, D9 proposed the finer axis of separating balance
+reads from nonce reads. **That is not implementable at this layer.** revm's
+`basic_ref` returns the whole `AccountInfo`, so the database boundary cannot
+observe which field the EVM consumed; distinguishing them would require an
+`Inspector` watching opcodes, which is a different order of cost. The axis moved
+to slot-versus-account, which is both implementable and the one the brief
+actually names. The balance/nonce limitation is documented in `types.rs` and
+belongs in the report as a stated limitation.
 
 ---
 
