@@ -82,12 +82,15 @@ impl SimpleState {
         self.storage.retain(|(addr, _), _| *addr != address);
     }
 
-    /// Final balance of an account, for cross-checks and assertions.
+    /// An account as it currently exists. Under EIP-161 an empty account does
+    /// not: a transfer of nothing to a nonexistent address, or a call to a
+    /// precompile, leaves a touched empty account that mainnet deletes (D19).
     pub fn account(&self, address: Address) -> Option<AccountInfo> {
-        self.accounts
-            .get(&address)
-            .cloned()
-            .or_else(|| self.base.account(address).cloned())
+        let info = match self.accounts.get(&address) {
+            Some(written) => Some(written.clone()),
+            None => self.base.account(address).cloned(),
+        };
+        super::existing(info)
     }
 
     pub fn slot(&self, address: Address, index: StorageKey) -> StorageValue {

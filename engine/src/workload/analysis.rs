@@ -7,7 +7,7 @@
 //! contract workloads with no generator knob at all.
 
 use crate::exec::execute;
-use crate::state::SimpleState;
+use crate::state::{existing, same_account, SimpleState};
 use crate::types::{Granularity, Key, TxIdx};
 use crate::workload::Workload;
 use revm::context::BlockEnv;
@@ -54,6 +54,11 @@ impl DependencyProfile {
 /// slot before modifying it, so every write is preceded by a read of the same
 /// location, and read-after-write captures the chain.
 ///
+/// What counts as a write is exactly what the multi-version store counts
+/// (D18): a changed value, with existence under EIP-161. The x-axis of Figure 2
+/// and the scheduler under test must never disagree on it — they did once
+/// (E12).
+///
 /// # Panics
 ///
 /// If the EVM refuses a transaction — the same condition under which the
@@ -87,7 +92,13 @@ pub fn analyse(workload: &Workload, block: &BlockEnv) -> DependencyProfile {
             if !account.is_touched() || *address == block.beneficiary {
                 continue;
             }
-            last_writer.insert(Key::Basic(*address), j);
+            // The store's rule (D18, D19): written only if the account's state
+            // changed. Sequentially, the pre-transaction state is simply the
+            // current one, so no side log is needed here.
+            let after = existing(Some(account.info.clone()));
+            if !same_account(state.account(*address).as_ref(), after.as_ref()) {
+                last_writer.insert(Key::Basic(*address), j);
+            }
             for (index, slot) in account.storage.iter() {
                 if slot.present_value != slot.original_value {
                     last_writer.insert(Key::Storage(*address, *index), j);

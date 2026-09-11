@@ -11,8 +11,10 @@ use crate::types::{Granularity, ReadSet};
 use revm::context::result::{EVMError, ExecutionResult, InvalidTransaction};
 use revm::context::{BlockEnv, TxEnv};
 use revm::database_interface::{DBErrorMarker, WrapDatabaseRef};
-use revm::state::EvmState;
+use revm::primitives::Address;
+use revm::state::{AccountInfo, EvmState};
 use revm::{Context, ExecuteEvm, MainBuilder, MainContext};
+use std::collections::HashMap;
 
 /// Why the EVM refused a transaction outright.
 ///
@@ -49,6 +51,9 @@ impl Completed {
 /// `docs/AI_USAGE.md`.
 pub struct Executed<E> {
     pub reads: ReadSet,
+    /// Account values the execution was served, for telling writes from
+    /// touches (D18).
+    pub served: HashMap<Address, Option<AccountInfo>>,
     pub outcome: Result<Completed, ExecError<E>>,
 }
 
@@ -79,6 +84,7 @@ where
     };
     Executed {
         reads: recorder.take_read_set(),
+        served: recorder.take_served_accounts(),
         outcome,
     }
 }

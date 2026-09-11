@@ -29,6 +29,7 @@ use core::cell::RefCell;
 use revm::database_interface::DatabaseRef;
 use revm::primitives::{Address, StorageKey, StorageValue, B256};
 use revm::state::{AccountId, AccountInfo, Bytecode};
+use std::collections::HashMap;
 
 /// Wraps a [`StateView`] and logs every read against it.
 ///
@@ -38,6 +39,10 @@ use revm::state::{AccountId, AccountInfo, Bytecode};
 pub struct ReadRecorder<V: StateView> {
     inner: V,
     log: RefCell<ReadSet>,
+    /// The account values this execution was served, keyed by address. A side
+    /// log beside the read set, never part of it (D18): the store needs them to
+    /// tell an account the execution changed from one it merely touched.
+    served: RefCell<HashMap<Address, Option<AccountInfo>>>,
     granularity: Granularity,
 }
 
@@ -46,6 +51,7 @@ impl<V: StateView> ReadRecorder<V> {
         Self {
             inner,
             log: RefCell::new(ReadSet::new()),
+            served: RefCell::new(HashMap::new()),
             granularity,
         }
     }
@@ -54,6 +60,13 @@ impl<V: StateView> ReadRecorder<V> {
     /// be reused for the next incarnation.
     pub fn take_read_set(&self) -> ReadSet {
         core::mem::take(&mut *self.log.borrow_mut())
+    }
+
+    /// Takes the account values served to this execution. The first value
+    /// served for each address is kept: it is what the execution started from,
+    /// and revm caches an account after loading it once.
+    pub fn take_served_accounts(&self) -> HashMap<Address, Option<AccountInfo>> {
+        core::mem::take(&mut *self.served.borrow_mut())
     }
 
     pub fn read_set_len(&self) -> usize {
@@ -91,7 +104,14 @@ where
     type Error = V::Error;
 
     fn basic_ref(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
-        self.record(Key::Basic(address), |v| v.basic(address))
+        // Logged through `record` exactly as before; the served value is an
+        // additional side log, not a substitute for the read-set entry.
+        let info = self.record(Key::Basic(address), |v| v.basic(address))?;
+        self.served
+            .borrow_mut()
+            .entry(address)
+            .or_insert_with(|| info.clone().map(|i| i.without_code()));
+        Ok(info)
     }
 
     fn code_by_hash_ref(&self, code_hash: B256) -> Result<Bytecode, Self::Error> {

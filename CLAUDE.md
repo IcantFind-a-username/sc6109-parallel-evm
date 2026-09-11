@@ -15,6 +15,13 @@ EVM, benchmarked across a conflict-density axis. Read
 preference — the course grades whether the student directed the work, and the
 git history is the evidence.
 
+**Amended 2026-09-12:** the user delegated the remaining design decisions to
+Claude and asked for the project to be completed without stopping at each step.
+Decisions are still recorded in DECISIONS.md, marked *Decided by: Claude
+(delegated)*, and the AI usage log records the change honestly. The rules below
+about recording and logging still apply; the rule about stopping to ask does
+not, except for anything irreversible or outward-facing.
+
 Consequences:
 
 - **Do not make architecture decisions unilaterally.** If a task requires one —

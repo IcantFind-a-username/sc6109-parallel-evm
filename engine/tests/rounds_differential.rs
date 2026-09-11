@@ -196,3 +196,32 @@ fn agrees_on_compute_workloads() {
 fn agrees_with_sequential_full_gate() {
     sweep(0..1000, &[2, 4, 6, 8, 12], 200, 400);
 }
+
+/// The workload E12 and E14 were found on, at the same scale as the transfer
+/// gate. Few senders, so nonce chains are dense and speculation has work to do.
+#[test]
+#[ignore = "full M2a gate sweep; run with --release -- --ignored"]
+fn agrees_on_compute_full_gate() {
+    for seed in 0..1000 {
+        let workload = ComputeWorkload::generate(
+            &ComputeConfig {
+                accounts: 200,
+                transactions: 400,
+                payload: 64,
+            },
+            seed,
+        );
+        for threads in [2, 4, 6, 8, 12] {
+            let config = SchedulerConfig {
+                threads,
+                ..Default::default()
+            };
+            assert_agree(
+                &SequentialScheduler::new(),
+                &RoundScheduler::new(),
+                &workload,
+                &config,
+            );
+        }
+    }
+}

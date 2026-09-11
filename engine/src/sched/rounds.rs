@@ -133,11 +133,11 @@ impl Scheduler for RoundScheduler {
                         let out = execute(view, txs[j].clone(), &config.block, config.granularity);
                         let (reverted, refused) = match &out.outcome {
                             Ok(done) => {
-                                mv.apply(j, incarnation, Some(&done.writes), base);
+                                mv.apply(j, incarnation, Some(&done.writes), &out.served, base);
                                 (!done.is_success(), None)
                             }
                             Err(err) => {
-                                mv.apply(j, incarnation, None, base);
+                                mv.apply(j, incarnation, None, &out.served, base);
                                 (false, Some(format!("{err:?}")))
                             }
                         };

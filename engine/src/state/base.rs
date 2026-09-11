@@ -83,7 +83,10 @@ impl StateView for BaseState {
     type Error = StateError;
 
     fn basic(&self, address: Address) -> Result<(Option<AccountInfo>, ReadOrigin), Self::Error> {
-        Ok((self.accounts.get(&address).cloned(), ReadOrigin::Base))
+        Ok((
+            super::existing(self.accounts.get(&address).cloned()),
+            ReadOrigin::Base,
+        ))
     }
 
     fn code_by_hash(&self, code_hash: B256) -> Result<(Bytecode, ReadOrigin), Self::Error> {

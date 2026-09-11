@@ -18,22 +18,23 @@
 //!   rather than mishandled; see `docs/DESIGN.md` section 6.
 
 use crate::outcome::{AccountSummary, StateSnapshot};
-use crate::state::{BaseState, StateError, StateView};
+use crate::state::{existing, same_account, BaseState, StateError, StateView};
 use crate::types::{Granularity, Incarnation, Key, ReadOrigin, ReadSet, TxIdx, Version};
 use dashmap::DashMap;
 use revm::primitives::{Address, StorageKey, StorageValue, B256, KECCAK_EMPTY, U256};
 use revm::state::{AccountInfo, Bytecode, EvmState};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 /// A value stored at a location.
 #[derive(Clone, Debug)]
 enum Value {
-    /// Balance, nonce and code hash. Bytecode itself is stripped before storing:
-    /// cloning it on every read would be expensive, and revm fetches code by
-    /// hash from the base snapshot when `info.code` is absent.
-    Account(AccountInfo),
+    /// Balance, nonce and code hash, or `None` for an account that does not
+    /// exist under EIP-161. Bytecode is stripped before storing: cloning it on
+    /// every read would be expensive, and revm fetches code by hash from the
+    /// base snapshot when `info.code` is absent.
+    Account(Option<AccountInfo>),
     Slot(StorageValue),
 }
 
@@ -123,13 +124,29 @@ impl MVMemory {
     ///
     /// A refused transaction is applied with no writes, which retracts whatever
     /// its previous incarnation wrote.
+    ///
+    /// # What counts as a write (D18, D19)
+    ///
+    /// An account is written only if its state after execution differs from
+    /// the value this execution was *served* for it — not merely because revm
+    /// marked it touched. A touched-but-unchanged account is a read. Treating it
+    /// as a write once serialised every transaction that called the same
+    /// precompile, and would have serialised every contract workload through
+    /// the contract's own account (E12). Existence follows EIP-161, so a
+    /// precompile call — absent before, empty after — changes nothing (E14).
+    /// An account that was touched but never served, which revm does not
+    /// produce, is conservatively treated as written.
+    ///
+    /// Returns whether this incarnation wrote a location its previous
+    /// incarnation did not, which M2b uses to decide how much to revalidate.
     pub fn apply(
         &self,
         tx: TxIdx,
         incarnation: Incarnation,
         writes: Option<&EvmState>,
+        served: &HashMap<Address, Option<AccountInfo>>,
         base: &BaseState,
-    ) {
+    ) -> bool {
         let mut written = Vec::new();
         let mut fee = U256::ZERO;
 
@@ -149,10 +166,15 @@ impl MVMemory {
                 continue;
             }
 
-            let mut info = account.info.clone();
-            info.code = None;
-            self.insert(Key::Basic(*address), tx, incarnation, Value::Account(info));
-            written.push(Key::Basic(*address));
+            let after = existing(Some(account.info.clone().without_code()));
+            let changed = match served.get(address) {
+                Some(before) => !same_account(before.as_ref(), after.as_ref()),
+                None => true,
+            };
+            if changed {
+                self.insert(Key::Basic(*address), tx, incarnation, Value::Account(after));
+                written.push(Key::Basic(*address));
+            }
 
             for (index, slot) in account.storage.iter() {
                 if slot.present_value != slot.original_value {
@@ -169,6 +191,7 @@ impl MVMemory {
             &mut *self.last_writes[tx].lock().expect("writes lock"),
             written.clone(),
         );
+        let previous: BTreeSet<Key> = stale.iter().copied().collect();
         let current: BTreeSet<Key> = written.into_iter().collect();
         for key in stale {
             if !current.contains(&key) {
@@ -177,6 +200,7 @@ impl MVMemory {
                 }
             }
         }
+        !current.is_subset(&previous)
     }
 
     fn insert(&self, key: Key, tx: TxIdx, incarnation: Incarnation, value: Value) {
@@ -239,9 +263,14 @@ impl MVMemory {
                 continue;
             };
             match (item.key(), &entry.value) {
-                (Key::Basic(address), Value::Account(info)) => {
-                    final_info.insert(*address, info.clone());
-                }
+                (Key::Basic(address), Value::Account(info)) => match info {
+                    Some(info) => {
+                        final_info.insert(*address, info.clone());
+                    }
+                    None => {
+                        final_info.remove(address);
+                    }
+                },
                 (Key::Storage(address, index), Value::Slot(value)) => {
                     final_slots.insert((*address, *index), *value);
                 }
@@ -261,6 +290,9 @@ impl MVMemory {
         }
 
         for (address, info) in final_info {
+            if info.is_empty() {
+                continue; // EIP-161: an empty account does not exist.
+            }
             out.accounts.insert(
                 address,
                 AccountSummary {
@@ -304,7 +336,7 @@ impl StateView for MVView<'_> {
         match self.mv.resolve(&Key::Basic(address), self.tx) {
             Resolved::Base => self.base.basic(address),
             Resolved::Written(version, Value::Account(info)) => {
-                Ok((Some(info), ReadOrigin::Written(version)))
+                Ok((info, ReadOrigin::Written(version)))
             }
             Resolved::Written(_, Value::Slot(_)) => unreachable!("slot stored at account key"),
         }
@@ -344,7 +376,7 @@ mod tests {
     //! cases construct the shapes the workloads do not yet produce.
 
     use super::*;
-    use revm::primitives::{address, HashMap};
+    use revm::primitives::{address, HashMap as EvmStorageMap};
     use revm::state::{Account, EvmStorageSlot};
 
     const A: Address = address!("a100000000000000000000000000000000000001");
@@ -357,7 +389,7 @@ mod tests {
             ..Default::default()
         });
         acc.mark_touch();
-        let mut storage = HashMap::default();
+        let mut storage = EvmStorageMap::default();
         for &(index, original, present) in slots {
             storage.insert(
                 StorageKey::from(index),
@@ -376,6 +408,20 @@ mod tests {
         accounts.into_iter().collect()
     }
 
+    /// Nothing served: every touched account in `writes` counts as changed.
+    /// The existing cases exercise versioning, not the write rule, and keep
+    /// their meaning under it.
+    fn served() -> HashMap<Address, Option<AccountInfo>> {
+        HashMap::new()
+    }
+
+    fn info(balance: u64) -> AccountInfo {
+        AccountInfo {
+            balance: U256::from(balance),
+            ..Default::default()
+        }
+    }
+
     fn mv(n: usize) -> MVMemory {
         MVMemory::new(n, COINBASE, Granularity::Slot)
     }
@@ -383,8 +429,20 @@ mod tests {
     #[test]
     fn reader_sees_latest_earlier_writer() {
         let (m, base) = (mv(4), BaseState::new());
-        m.apply(0, 0, Some(&writes(vec![(A, touched(10, &[]))])), &base);
-        m.apply(2, 0, Some(&writes(vec![(A, touched(30, &[]))])), &base);
+        m.apply(
+            0,
+            0,
+            Some(&writes(vec![(A, touched(10, &[]))])),
+            &served(),
+            &base,
+        );
+        m.apply(
+            2,
+            0,
+            Some(&writes(vec![(A, touched(30, &[]))])),
+            &served(),
+            &base,
+        );
 
         let view = MVView::new(&m, &base, 3);
         let (info, origin) = view.basic(A).unwrap();
@@ -414,11 +472,18 @@ mod tests {
                 (A, touched(1, &[(7, 0, 99)])),
                 (B, touched(5, &[])),
             ])),
+            &served(),
             &base,
         );
 
         // Incarnation 1 writes only A's balance: B and slot 7 are gone.
-        m.apply(1, 1, Some(&writes(vec![(A, touched(1, &[]))])), &base);
+        m.apply(
+            1,
+            1,
+            Some(&writes(vec![(A, touched(1, &[]))])),
+            &served(),
+            &base,
+        );
 
         let view = MVView::new(&m, &base, 2);
         assert_eq!(
@@ -440,9 +505,10 @@ mod tests {
             1,
             0,
             Some(&writes(vec![(A, touched(1, &[(7, 0, 99)]))])),
+            &served(),
             &base,
         );
-        m.apply(1, 1, None, &base);
+        m.apply(1, 1, None, &served(), &base);
 
         let view = MVView::new(&m, &base, 2);
         assert_eq!(view.basic(A).unwrap().1, ReadOrigin::Base);
@@ -455,13 +521,19 @@ mod tests {
     #[test]
     fn validation_fails_when_a_read_is_retracted_under_it() {
         let (m, base) = (mv(3), BaseState::new());
-        m.apply(1, 0, Some(&writes(vec![(B, touched(5, &[]))])), &base);
+        m.apply(
+            1,
+            0,
+            Some(&writes(vec![(B, touched(5, &[]))])),
+            &served(),
+            &base,
+        );
 
         let mut reads = ReadSet::new();
         reads.record(Key::Basic(B), ReadOrigin::Written(Version::new(1, 0)));
         assert!(m.validate(2, &reads));
 
-        m.apply(1, 1, None, &base);
+        m.apply(1, 1, None, &served(), &base);
         assert!(
             !m.validate(2, &reads),
             "a read of a retracted write must fail validation"
@@ -471,11 +543,23 @@ mod tests {
     #[test]
     fn validation_fails_on_new_incarnation_even_with_equal_value() {
         let (m, base) = (mv(3), BaseState::new());
-        m.apply(0, 0, Some(&writes(vec![(A, touched(10, &[]))])), &base);
+        m.apply(
+            0,
+            0,
+            Some(&writes(vec![(A, touched(10, &[]))])),
+            &served(),
+            &base,
+        );
         let mut reads = ReadSet::new();
         reads.record(Key::Basic(A), ReadOrigin::Written(Version::new(0, 0)));
 
-        m.apply(0, 1, Some(&writes(vec![(A, touched(10, &[]))])), &base);
+        m.apply(
+            0,
+            1,
+            Some(&writes(vec![(A, touched(10, &[]))])),
+            &served(),
+            &base,
+        );
         assert!(
             !m.validate(1, &reads),
             "versions, not values, are compared: a new incarnation invalidates its readers"
@@ -489,6 +573,7 @@ mod tests {
             0,
             0,
             Some(&writes(vec![(A, touched(1, &[(3, 8, 8)]))])),
+            &served(),
             &base,
         );
         let view = MVView::new(&m, &base, 1);
@@ -505,12 +590,14 @@ mod tests {
             0,
             0,
             Some(&writes(vec![(COINBASE, touched(7, &[]))])),
+            &served(),
             &base,
         );
         m.apply(
             1,
             0,
             Some(&writes(vec![(COINBASE, touched(5, &[]))])),
+            &served(),
             &base,
         );
 
@@ -537,7 +624,109 @@ mod tests {
             0,
             0,
             Some(&writes(vec![(COINBASE, touched(50, &[]))])),
+            &served(),
             &base,
+        );
+    }
+
+    /// E12's rule, directly: served a value, left with the same value, is a
+    /// read and not a write.
+    #[test]
+    fn touched_but_unchanged_account_is_not_a_write() {
+        let (m, base) = (mv(3), BaseState::new());
+        let served = HashMap::from([(A, Some(info(10)))]);
+        let wrote_new = m.apply(
+            0,
+            0,
+            Some(&writes(vec![(A, touched(10, &[]))])),
+            &served,
+            &base,
+        );
+        assert!(!wrote_new);
+        assert_eq!(
+            MVView::new(&m, &base, 1).basic(A).unwrap().1,
+            ReadOrigin::Base
+        );
+    }
+
+    #[test]
+    fn changed_account_is_a_write() {
+        let (m, base) = (mv(3), BaseState::new());
+        let served = HashMap::from([(A, Some(info(10)))]);
+        m.apply(
+            0,
+            0,
+            Some(&writes(vec![(A, touched(7, &[]))])),
+            &served,
+            &base,
+        );
+        let (value, origin) = MVView::new(&m, &base, 1).basic(A).unwrap();
+        assert_eq!(value.unwrap().balance, U256::from(7));
+        assert_eq!(origin, ReadOrigin::Written(Version::new(0, 0)));
+    }
+
+    /// The original scene of E12 and E14: a call to the sha256 precompile. Its
+    /// account is absent before and empty after, which under EIP-161 is the
+    /// same state. It must not become a write.
+    #[test]
+    fn precompile_call_is_not_a_write() {
+        let sha256 = Address::with_last_byte(2);
+        let (m, base) = (mv(3), BaseState::new());
+        let served = HashMap::from([(sha256, None)]);
+        let wrote_new = m.apply(
+            0,
+            0,
+            Some(&writes(vec![(sha256, touched(0, &[]))])),
+            &served,
+            &base,
+        );
+        assert!(!wrote_new, "an empty touched account is not a new location");
+        assert_eq!(
+            MVView::new(&m, &base, 1).basic(sha256).unwrap().1,
+            ReadOrigin::Base
+        );
+        assert!(
+            !m.snapshot(&base).accounts.contains_key(&sha256),
+            "EIP-161: empty accounts do not exist"
+        );
+    }
+
+    #[test]
+    fn apply_reports_new_locations() {
+        let (m, base) = (mv(2), BaseState::new());
+        assert!(m.apply(
+            0,
+            0,
+            Some(&writes(vec![(A, touched(1, &[]))])),
+            &served(),
+            &base
+        ));
+        assert!(
+            !m.apply(
+                0,
+                1,
+                Some(&writes(vec![(A, touched(2, &[]))])),
+                &served(),
+                &base
+            ),
+            "same location set"
+        );
+        assert!(m.apply(
+            0,
+            2,
+            Some(&writes(vec![(A, touched(3, &[])), (B, touched(1, &[]))])),
+            &served(),
+            &base
+        ));
+        assert!(
+            !m.apply(
+                0,
+                3,
+                Some(&writes(vec![(A, touched(3, &[]))])),
+                &served(),
+                &base
+            ),
+            "shrinking is not new"
         );
     }
 }

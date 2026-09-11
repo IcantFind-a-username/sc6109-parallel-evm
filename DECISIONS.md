@@ -408,6 +408,48 @@ runs, and the store is precisely what M2b rebuilds. (C) revm's
 
 ---
 
+## D19 — Both engines follow EIP-161 (settles O10) · 2026-09-12
+
+**Decided by:** Claude — from 2026-09-12 the user delegated the remaining
+design decisions (see CLAUDE.md, working agreement)
+**Status:** accepted, implemented
+
+An account left empty after execution — zero nonce, zero balance, no code —
+does not exist. One function, `state::existing`, applies the rule for
+`SimpleState`, `BaseState`, `MVMemory` and the dependency analysis, and
+snapshots omit empty accounts.
+
+**Why.** It is mainnet's rule and Anvil's, so the M1 cross-validation needs it.
+And without it D18 would not fix E12's own case: a precompile call is served
+`None` and leaves a touched empty account, which is only "no change" if empty
+means absent (E14).
+
+**Rejected.** Persisting empty accounts, as revm's `CacheDB` does — keeps the
+precompile chain and fails the Anvil gate. Pre-seeding precompile accounts —
+hides one symptom.
+
+---
+
+## D20 — Contracts live in base state; compiled bytecode is committed · 2026-09-12
+
+**Decided by:** Claude (delegated)
+**Status:** accepted, implemented
+
+The three workload contracts (`contracts/src`) are placed in base state with
+their runtime bytecode and pre-seeded storage, not deployed inside the block.
+Their compiled runtime bytecode is committed under `engine/assets/`, extracted
+by `scripts/extract_bytecode.py`; solc is pinned to 0.8.28.
+
+**Why.** Account creation inside a block is out of scope for the store
+(DESIGN §6), and a deployment transaction would be one every other transaction
+depends on — a conflict the workload is not meant to have. Committing the
+bytecode lets the engine build and test, and CI run, without Foundry.
+
+**Rejected.** Deploying via a first transaction; compiling at build time
+through a build script (would make solc a build dependency of the engine).
+
+---
+
 ## Open
 
 Decisions not yet made. Move them above when settled.
@@ -420,26 +462,3 @@ Decisions not yet made. Move them above when settled.
   [docs/EXPERIMENTS.md](docs/EXPERIMENTS.md).
 - **O4 — Core A second seat.** `MVMemory` and the validation path should not be
   reviewed only by their author.
-- **O10 — Do touched empty accounts exist? (EIP-161; blocks the E12 fix).**
-  Both engines persist every touched account, empty or not — as revm's
-  `CacheDB` does. Mainnet, and therefore Anvil, applies EIP-161: an account
-  that is empty after being touched is deleted. This decides whether D18 fixes
-  the case that exposed E12. The sha256 precompile `0x02` is absent from base
-  state, so each call is served `None` and leaves a touched empty account.
-  - *(i) Adopt EIP-161 in both engines.* Touched accounts that are empty after
-    execution are treated as non-existent, in `SimpleState::commit`,
-    `MVMemory::apply`, snapshots and the dependency analysis. `None` → empty is
-    then no change, D18 removes the false chain, and the engine matches what the
-    M1 Anvil gate will compare against. Touches three components and the
-    snapshot definition.
-  - *(ii) Keep persisting empty accounts.* `None` → empty remains a real
-    existence change, so D18 registers it as a write and **the precompile chain
-    survives**. Contract accounts, which exist and are unchanged, are still
-    fixed. The Anvil gate will then fail on empty accounts — the zero-gas-price
-    beneficiary at `0x0` is one already.
-  - *(iii) Pre-seed the precompile accounts into base state.* Removes this one
-    symptom and nothing else. Listed to be rejected.
-
-  Claude's recommendation: (i). It is Ethereum's semantics, the Anvil gate
-  requires it regardless, and without it D18 does not fix the case it was
-  decided for.
