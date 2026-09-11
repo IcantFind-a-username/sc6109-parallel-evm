@@ -26,3 +26,7 @@ venv/
 .idea/
 .vscode/
 *.swp
+
+# Course material at repo root — not ours to redistribute
+# (scoped to root so docs/*.pdf deliverables still track)
+/*.pdf

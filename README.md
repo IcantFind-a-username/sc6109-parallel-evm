@@ -1,7 +1,7 @@
 # sc6109-parallel-evm
 
 A parallel transaction execution engine for EVM workloads, built as a course
-project for **SC6019 — Blockchain Scalability** (Option 5).
+project for **SC6109 — Blockchain Scalability** (Option 5).
 
 ## What this is
 
