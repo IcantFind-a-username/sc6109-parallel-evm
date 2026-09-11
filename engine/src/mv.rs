@@ -9,8 +9,10 @@
 //!
 //! # Scope in M2a
 //!
-//! - Slot granularity only. Account granularity is refused at construction;
-//!   see [`MVMemory::new`] for why.
+//! - Slot or account granularity. Under account granularity (D14) every read
+//!   of an account — its info or any of its slots — is versioned by the latest
+//!   transaction below the reader that wrote *anything* in that account; see
+//!   [`MVMemory::new`].
 //! - `ESTIMATE` markers exist for the collaborative scheduler (M2b): an
 //!   aborted transaction's writes are marked rather than removed, and a reader
 //!   that reaches one is told which transaction to wait for instead of reading
@@ -69,32 +71,71 @@ pub struct MVMemory {
     fee_deltas: Vec<Mutex<U256>>,
     beneficiary: Address,
     beneficiary_touched: AtomicBool,
+    granularity: Granularity,
+    /// Per account, every transaction that wrote anything in it — info or any
+    /// slot — in its latest incarnation. The version index for account
+    /// granularity (D14); maintained under slot granularity too, unused there.
+    account_writers: DashMap<Address, BTreeMap<TxIdx, (Incarnation, bool)>>,
 }
 
 impl MVMemory {
-    /// # Panics
+    /// # Granularity (D14)
     ///
-    /// On [`Granularity::Account`]. The read recorder coarsens the *key* under
-    /// that setting but records the *exact* location's origin, and re-resolving
-    /// the coarse key does not re-check lower writers of the account. Such a
-    /// validation can pass while a transaction read a value that has since
-    /// changed. That is a soundness hole, not a tuning difference, and the right
-    /// semantics for coarse conflict detection is an open decision. Refusing is
-    /// the only honest behaviour until it is made. See E7 in
-    /// `docs/AI_USAGE.md`.
+    /// Under [`Granularity::Account`] the read recorder files every read of an
+    /// account under one key, and this store versions that key by the latest
+    /// transaction below the reader that wrote anything in the account. That is
+    /// sound because a write is always also a read here: revm loads an account
+    /// before changing it and loads a slot before storing to it, and both loads
+    /// go through the recorder. So every writer of an account has itself read
+    /// the account at the version of the writer below it, a change anywhere in
+    /// the chain invalidates the next writer up, and checking only the latest
+    /// writer suffices. E7 was the version of this without the account-level
+    /// index — the exact slot's writer recorded under the coarse key — which is
+    /// unsound: a change by any writer other than the latest went unseen.
     pub fn new(transactions: usize, beneficiary: Address, granularity: Granularity) -> Self {
-        assert_eq!(
-            granularity,
-            Granularity::Slot,
-            "multi-version memory supports slot granularity only; account granularity is \
-             unsound for validation as currently implemented (see E7 in docs/AI_USAGE.md)"
-        );
         Self {
             data: DashMap::new(),
             last_writes: (0..transactions).map(|_| Mutex::new(Vec::new())).collect(),
             fee_deltas: (0..transactions).map(|_| Mutex::new(U256::ZERO)).collect(),
             beneficiary,
             beneficiary_touched: AtomicBool::new(false),
+            granularity,
+            account_writers: DashMap::new(),
+        }
+    }
+
+    /// The latest transaction below `tx` that wrote anything in `address`.
+    fn resolve_account(&self, address: Address, tx: TxIdx) -> Resolved {
+        let Some(writers) = self.account_writers.get(&address) else {
+            return Resolved::Base;
+        };
+        match writers.range(..tx).next_back() {
+            Some((&writer, &(_, true))) => Resolved::Dependency(writer),
+            Some((&writer, &(incarnation, false))) => {
+                Resolved::Written(Version::new(writer, incarnation), Value::Slot(U256::ZERO))
+            }
+            None => Resolved::Base,
+        }
+    }
+
+    /// The version a read of `key` is recorded under: the exact location's
+    /// writer under slot granularity, the account's latest writer under
+    /// account granularity.
+    fn origin_of(&self, key: &Key, exact: &Resolved, tx: TxIdx) -> Result<ReadOrigin, StateError> {
+        let resolved = match (self.granularity, key) {
+            (Granularity::Account, Key::Basic(a) | Key::Storage(a, _)) => {
+                self.resolve_account(*a, tx)
+            }
+            _ => match exact {
+                Resolved::Base => Resolved::Base,
+                Resolved::Written(v, _) => Resolved::Written(*v, Value::Slot(U256::ZERO)),
+                Resolved::Dependency(on) => Resolved::Dependency(*on),
+            },
+        };
+        match resolved {
+            Resolved::Base => Ok(ReadOrigin::Base),
+            Resolved::Written(v, _) => Ok(ReadOrigin::Written(v)),
+            Resolved::Dependency(on) => Err(StateError::Blocked { on }),
         }
     }
 
@@ -192,6 +233,27 @@ impl MVMemory {
         );
         let previous: BTreeSet<Key> = stale.iter().copied().collect();
         let current: BTreeSet<Key> = written.into_iter().collect();
+
+        let accounts = |keys: &BTreeSet<Key>| -> BTreeSet<Address> {
+            keys.iter()
+                .filter_map(|k| match k {
+                    Key::Basic(a) | Key::Storage(a, _) => Some(*a),
+                    _ => None,
+                })
+                .collect()
+        };
+        let (now, before) = (accounts(&current), accounts(&previous));
+        for a in &now {
+            self.account_writers
+                .entry(*a)
+                .or_default()
+                .insert(tx, (incarnation, false));
+        }
+        for a in before.difference(&now) {
+            if let Some(mut writers) = self.account_writers.get_mut(a) {
+                writers.remove(&tx);
+            }
+        }
         for key in stale {
             if !current.contains(&key) {
                 if let Some(mut versions) = self.data.get_mut(&key) {
@@ -222,6 +284,13 @@ impl MVMemory {
             if let Some(mut versions) = self.data.get_mut(key) {
                 if let Some(entry) = versions.get_mut(&tx) {
                     entry.estimate = true;
+                }
+            }
+            if let Key::Basic(a) | Key::Storage(a, _) = key {
+                if let Some(mut writers) = self.account_writers.get_mut(a) {
+                    if let Some(w) = writers.get_mut(&tx) {
+                        w.1 = true;
+                    }
                 }
             }
         }
@@ -259,7 +328,11 @@ impl MVMemory {
             if *key == Key::Basic(self.beneficiary) {
                 return true;
             }
-            match self.resolve(key, tx) {
+            let current = match (self.granularity, key) {
+                (Granularity::Account, Key::Basic(a)) => self.resolve_account(*a, tx),
+                _ => self.resolve(key, tx),
+            };
+            match current {
                 Resolved::Base => *recorded == ReadOrigin::Base,
                 Resolved::Written(v, _) => *recorded == ReadOrigin::Written(v),
                 // What was read is about to be rewritten: stale by definition.
@@ -361,12 +434,13 @@ impl StateView for MVView<'_> {
             // Always the base value: see MVMemory::beneficiary_delta.
             return self.base.basic(address);
         }
-        match self.mv.resolve(&Key::Basic(address), self.tx) {
+        let key = Key::Basic(address);
+        let exact = self.mv.resolve(&key, self.tx);
+        let origin = self.mv.origin_of(&key, &exact, self.tx)?;
+        match exact {
             Resolved::Dependency(on) => Err(StateError::Blocked { on }),
-            Resolved::Base => self.base.basic(address),
-            Resolved::Written(version, Value::Account(info)) => {
-                Ok((info, ReadOrigin::Written(version)))
-            }
+            Resolved::Base => Ok((self.base.basic(address)?.0, origin)),
+            Resolved::Written(_, Value::Account(info)) => Ok((info, origin)),
             Resolved::Written(_, Value::Slot(_)) => unreachable!("slot stored at account key"),
         }
     }
@@ -383,12 +457,13 @@ impl StateView for MVView<'_> {
         address: Address,
         index: StorageKey,
     ) -> Result<(StorageValue, ReadOrigin), Self::Error> {
-        match self.mv.resolve(&Key::Storage(address, index), self.tx) {
+        let key = Key::Storage(address, index);
+        let exact = self.mv.resolve(&key, self.tx);
+        let origin = self.mv.origin_of(&key, &exact, self.tx)?;
+        match exact {
             Resolved::Dependency(on) => Err(StateError::Blocked { on }),
-            Resolved::Base => self.base.storage(address, index),
-            Resolved::Written(version, Value::Slot(value)) => {
-                Ok((value, ReadOrigin::Written(version)))
-            }
+            Resolved::Base => Ok((self.base.storage(address, index)?.0, origin)),
+            Resolved::Written(_, Value::Slot(value)) => Ok((value, origin)),
             Resolved::Written(_, Value::Account(_)) => unreachable!("account stored at slot key"),
         }
     }

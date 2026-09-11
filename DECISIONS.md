@@ -287,8 +287,7 @@ Anvil proves our sequential engine matches the EVM.
 ## D14 — Coarse granularity means "a write is also a read" (settles O5) · 2026-09-11
 
 **Decided by:** user
-**Status:** accepted — decision only; implementation before M3, off M2b's
-critical path
+**Status:** accepted — implemented 2026-09-12
 
 Under `Granularity::Account`, a transaction that writes an account is treated as
 having also read **every slot of that account**. The multi-version store keeps
@@ -307,6 +306,14 @@ sound, but O(writers) per validation and quadratic on a hot account, which is
 precisely the workload the experiment most needs. (c) dropping the experiment —
 gives up the brief's named axis ("account access, storage slot access") for no
 saving that matters.
+
+*Implementation note.* The "write implies read" condition turned out to hold
+without extra machinery: revm loads an account before changing it and loads a
+slot before storing to it, and both loads pass through the recorder. What was
+needed was an account-level version index in the store, so that a coarse read
+is versioned by the account's latest writer rather than by the exact slot's
+writer — the latter is E7. Reintroducing E7 makes the round scheduler exceed its
+proven bound on the first seed.
 
 ---
 

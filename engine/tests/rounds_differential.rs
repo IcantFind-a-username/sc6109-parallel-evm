@@ -147,20 +147,6 @@ fn accounting_is_consistent() {
     );
 }
 
-#[test]
-#[should_panic(expected = "account granularity is unsound")]
-fn refuses_account_granularity() {
-    let workload = TransferWorkload::generate(&TransferConfig::default(), 0);
-    RoundScheduler::new().execute_block(
-        &workload.txs,
-        &workload.base,
-        &SchedulerConfig {
-            granularity: parevm::Granularity::Account,
-            ..Default::default()
-        },
-    );
-}
-
 /// D16's compute workload goes through the same gate as everything else.
 /// Few senders, so nonce chains are common and speculation has work to do.
 #[test]
