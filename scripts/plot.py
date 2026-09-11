@@ -128,8 +128,9 @@ def fig2(rows):
     a.set_title("Speedup falls with measured dependency density (6 threads)", loc="left")
     for r in main:
         if r["scheduler"] == "blockstm" and (r["workload"] in ("nft", "amm") or r["param"] in ("uniform-sparse", "8192b")):
+            dy = -11 if r["workload"] == "nft" else 4
             a.annotate(label(r), (r["dep_density"], r["speedup_median"]), textcoords="offset points",
-                       xytext=(6, 4), fontsize=7.5, color=INK2)
+                       xytext=(6, dy), fontsize=7.5, color=INK2)
     b.set_ylabel("abort rate")
     b.set_xlabel("measured dependency density — fraction of transactions reading an earlier write")
     b.set_title("…and aborts rise with it (the static scheduler never aborts)", loc="left")

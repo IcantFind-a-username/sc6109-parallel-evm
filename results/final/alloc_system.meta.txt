@@ -1,0 +1,24 @@
+# allocator comparison
+#
+# Thread counts above the performance-core count run partly on
+# efficiency cores (EXPERIMENTS.md section 6.1): 1-6 threads are the
+# primary result; 8 and 12 are reported and annotated as such.
+
+date: 2026-09-11T18:35:03Z
+git_commit: 211d2712bdec8a792ce349735375a3e672acabe7
+git_dirty: false
+seed: 2026
+runs_per_cell: 5 (median reported; one warmup run discarded)
+threads: [1, 2, 4, 6, 8, 12]
+block_size_main: 2000
+verification: every parallel run's final state diffed against sequential before its timing was kept
+timing: thread pools and per-block allocations are built before the timed region for every scheduler; the static scheduler's access-set derivation is excluded and reported as prep_ms
+allocator: system (parevm::ALLOCATOR, as compiled into this binary)
+revm: 41.0.0
+rustc: rustc 1.97.0 (2d8144b78 2026-07-07)
+cpu: Apple M3 Pro
+cores_physical: 12
+cores_performance: 6
+cores_efficiency: 6
+memory_bytes: 19327352832
+os: macOS 26.5.2

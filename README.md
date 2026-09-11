@@ -1,99 +1,107 @@
 # sc6109-parallel-evm
 
-A parallel transaction execution engine for EVM workloads, built as a course
-project for **SC6109 — Blockchain Scalability** (Option 5).
+A parallel transaction execution engine for EVM workloads — SC6109 Blockchain
+Scalability, course project Option 5.
 
-## What this is
+Real EVM bytecode (revm 41, Solidity contracts compiled by Foundry), real
+threads, three schedulers, and an answer to the brief's question: **when does
+parallel execution help, and when does it not?**
 
-Most blockchains execute transactions sequentially, even when the vast majority
-of them do not touch the same state. This project builds a scheduler that
-detects non-conflicting transactions, executes them in parallel over a real EVM,
-and measures **when parallel execution helps — and when it does not**.
+**→ [Read the report](docs/REPORT.md)**
 
-The headline result we are after is not only a speedup curve. It is the negative
-one: workloads that funnel every transaction through a single hot storage slot
-(NFT mints against `totalSupply`, swaps against one AMM pool) degrade to
-sequential throughput or worse, because abort-and-retry work is pure overhead.
+## Result in one table
+
+Block-STM on six performance cores (Apple M3 Pro), 2,000-transaction blocks,
+every run verified against sequential execution:
+
+| Workload | Speedup |
+| --- | --- |
+| Compute-heavy calls, independent | **5.6×** (92% of linear) |
+| ERC-20 transfers among many holders | **2.8×** |
+| Plain ETH transfers, independent | 1.4× — too little work per transaction |
+| ERC-20 with conflicts detected per *account* | 0.5× — every transfer collides in the token |
+| NFT mint / one AMM pool (a single dependency chain) | **0.43–0.51×** — slower than sequential |
+
+Parallelism pays when transactions are independent, each does real work, and
+the cores are real. Lose any one and it stops paying; lose the first and it
+costs.
+
+![Speedup by thread count](docs/figures/fig1_speedup_by_threads.png)
 
 ## Design
 
-Three execution strategies, compared against each other on identical workloads:
-
-| Strategy | Model | Notes |
-| --- | --- | --- |
-| **Sequential** | Baseline | Single-threaded, defines ground truth |
-| **Static scheduling** | Sealevel-style / EIP-7928 | Transactions declare read/write sets up front; disjoint sets run on separate threads. No aborts. Access sets are derived by a profiling pass, mirroring how an EIP-7928 block builder would produce them |
-| **Optimistic (Block-STM)** | Speculative + validate | All transactions run optimistically against multi-version memory; a transaction that read a value later written by a lower-indexed transaction is aborted and re-executed |
-
-Block-STM is the primary contribution. Its correctness requirement is strict:
-the final state must be **bit-identical to sequential execution**.
-
-## Stack
-
-- **Execution** — Rust + [revm](https://github.com/bluealloy/revm) as a library, running real EVM bytecode
-- **Parallelism** — `rayon` / thread pool over a `DashMap`-backed multi-version store
-- **Workloads** — Solidity contracts compiled with Foundry, fed to the engine as bytecode
-- **Analysis** — CSV output, plotted with Python/matplotlib
-
-## Workloads
-
-Conflict density is the independent variable:
-
-| Workload | Conflict profile |
+| Scheduler | Model |
 | --- | --- |
-| ERC-20 transfers, random recipients | Near-zero conflict — expect near-linear speedup |
-| ERC-20 transfers, Zipf-distributed hot accounts | Tunable, moderate conflict |
-| NFT mint | Every transaction writes `totalSupply` — total conflict |
-| AMM swaps against one pool | Total conflict |
+| **Sequential** | Baseline and definition of correct |
+| **M2a — round-based** | Execute all in parallel, validate, re-execute failures, repeat. Simple; quadratic on dependency chains |
+| **M2b — Block-STM** | Collaborative scheduler with multi-version memory, ESTIMATE markers and dependency parking (Gelashvili et al.) |
+| **M3 — static** | Access sets derived as an EIP-7928 block builder would; conflict-free levels run in parallel |
 
-## Metrics
-
-- Speedup vs. thread count (1 / 2 / 4 / 8 / 16)
-- Speedup vs. conflict rate
-- Abort rate and re-execution count, including per-transaction distribution
-- Critical path length (theoretical speedup ceiling)
-- Mean wall-clock time per transaction
+All share one execution path over revm. Reads are captured at the database
+boundary by the only type that implements revm's `DatabaseRef`; conflicts are
+detected per storage slot or per account; the block beneficiary is a
+commutative accumulator kept out of conflict detection. See
+[docs/DESIGN.md](docs/DESIGN.md).
 
 ## Correctness
 
-Two independent checks, both required before any benchmark number is trusted:
+- **Differential testing:** every parallel scheduler agrees slot-for-slot with
+  an independent sequential engine on 1,000 seeds per workload at 2–12 threads.
+- **Cross-validation:** the sequential engine agrees with an Anvil node on nine
+  workloads ([results/anvil_crosscheck.txt](results/anvil_crosscheck.txt)).
+- **Mutation testing:** injected bugs in the store and schedulers are caught by
+  the suite, which is how two gaps in the tests themselves were found and closed.
+- **Benchmarks verify too:** every timed run is diffed against sequential before
+  its timing is kept.
 
-1. **Differential testing** — sequential and parallel execution of the same
-   transaction batch must agree slot-for-slot, over randomized seeds, in CI.
-2. **Cross-validation against a real EVM** — the same batch replayed serially on
-   Anvil must produce matching balances and state.
+## Reproduce
 
-## Relationship to prior work
+Requires Rust 1.91+; Foundry only to rebuild the contracts or run the Anvil
+cross-check (compiled bytecode is committed).
 
-This is an independent implementation following the
-[Block-STM paper](https://arxiv.org/abs/2203.06871). It is not derived from
-[RISE's `pevm`](https://github.com/risechain/pevm) or any other existing
-Rust Block-STM implementation.
+```bash
+cd engine
+cargo test                                          # unit + differential tests
+cargo test --release -- --ignored                   # full gates and stress tests
+cargo run --release --bin bench -- final            # results/final/sweep.csv
+cargo run --release --bin bench -- alloc            # results/final/alloc_mimalloc.csv
+cargo run --release --no-default-features --bin bench -- alloc   # alloc_system.csv
+cargo run --release --bin bench -- export           # Anvil cross-check input
+python3 ../scripts/anvil_crosscheck.py ../results/scratch/crosscheck.json
+python3 ../scripts/plot.py                          # docs/figures/
+```
+
+## Layout
+
+```
+engine/            Rust crate `parevm`
+  src/state/       state views, the read recorder, sequential state
+  src/mv.rs        multi-version memory
+  src/sched/       sequential, rounds (M2a), blockstm/ (M2b), static_sched (M3)
+  src/workload/    transfer, compute, contract generators; dependency analysis
+  src/bin/         demo, bench
+  tests/           differential, property and regression tests
+  assets/          compiled contract bytecode
+contracts/         Solidity workloads and forge tests
+scripts/           Anvil cross-check, bytecode extraction, plotting
+results/           raw benchmark CSV with metadata
+docs/              report, design, experiments, roadmap, risks, figures
+```
 
 ## Documentation
 
 | Doc | Contents |
 | --- | --- |
-| [docs/ROADMAP.md](docs/ROADMAP.md) | Milestones, gates, ownership, scope-cut order |
-| [docs/DESIGN.md](docs/DESIGN.md) | Architecture, revm binding, multi-version memory, determinism argument |
-| [docs/EXPERIMENTS.md](docs/EXPERIMENTS.md) | Workloads, metrics, figures, measurement hygiene |
-| [docs/RISKS.md](docs/RISKS.md) | Ranked risks with symptoms and mitigations |
-| [docs/AI_USAGE.md](docs/AI_USAGE.md) | AI usage log (graded deliverable) |
+| [docs/REPORT.md](docs/REPORT.md) | The report: design, correctness, results, when parallelism helps |
+| [docs/DESIGN.md](docs/DESIGN.md) | Architecture and the determinism argument |
+| [docs/EXPERIMENTS.md](docs/EXPERIMENTS.md) | Experimental design and measurement hygiene |
+| [DECISIONS.md](DECISIONS.md) | Architecture decisions, with what was rejected |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | Milestones and gates |
+| [docs/RISKS.md](docs/RISKS.md) | Risks, with symptoms and mitigations |
+| [docs/AI_USAGE.md](docs/AI_USAGE.md) | AI usage log |
 
-## Status
+## Prior work
 
-M2a (round-based optimistic execution) is implemented and passes its
-differential gate against the sequential baseline. M1's Anvil cross-validation
-is outstanding, blocked on Foundry; no performance numbers are reported until it
-passes (D13). See [docs/ROADMAP.md](docs/ROADMAP.md).
-
-## Layout (planned)
-
-```
-engine/      Rust: multi-version memory, schedulers, revm integration
-contracts/   Solidity workload contracts (Foundry)
-bench/       Workload generation and benchmark harness
-analysis/    Plotting scripts
-results/     CSV output (gitignored)
-docs/        Report, design notes, AI usage log
-```
+An independent implementation following the
+[Block-STM paper](https://arxiv.org/abs/2203.06871); no existing parallel-EVM
+implementation was used.

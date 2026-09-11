@@ -23,7 +23,7 @@ milestone until the current gate is green.
 Get one transaction through a real EVM and one contract compiled. Nothing else.
 
 - [x] Rust workspace created, `revm` pinned to an exact version in `Cargo.toml`
-- [ ] Foundry project under `contracts/`, `forge build` produces bytecode
+- [x] Foundry project under `contracts/`, `forge build` produces bytecode
 - [x] A value transfer executes through `revm` against our own state stack
       (ERC-20 pending Foundry)
 - [x] CI runs `cargo fmt`, `clippy -D warnings` and `cargo test` on push
@@ -73,10 +73,9 @@ repeat until no aborts. Simpler, obviously correct, slightly less efficient.
 - [x] Validation pass
 - [x] Abort and re-execution with incarnation numbers
 - [x] Termination guard at the proven bound of `n` rounds
-- [ ] Differential sweep including a workload whose write set depends on its
-      reads (ERC-20 reverting on insufficient balance) — the only end-to-end
-      exercise of write retraction; see E8
-- [ ] Account-granularity semantics decided (O5) and implemented
+- [x] Differential sweep including a workload whose write set depends on its
+      reads (tight ERC-20)
+- [x] Account-granularity semantics decided (D14) and implemented
 
 **Gate M2a:** differential test passes on 1000 random seeds × 4 workloads ×
 {2,4,8,16} threads, in CI.
@@ -96,13 +95,10 @@ Four steps, each committed and reviewed separately:
       for unique incarnation dispatch, correct final state, clean termination
       under a watchdog, and revalidation after both aborts and new-location
       writes. Six injected bugs, all caught (E13)
-- [ ] **E12 fix (D18)** — writes judged against served values; full gate and
-      baseline re-run
-- [ ] **Step 2** — `ESTIMATE` markers and dependency waiting. Stops for the user
-      on any change to the store's public interface, or on the choice between
-      spinning, condition variables and lock-free queues
-- [ ] **Step 3** — real execution and validation; E6 gets a dedicated test here
-- [ ] **Step 4** — full gate, then the M2a comparison table
+- [x] **E12 fix (D18, D19)** — writes judged against served values, EIP-161
+- [x] **Step 2** — `ESTIMATE` markers and dependency parking (D21)
+- [x] **Step 3** — real execution and validation; dedicated speculative-refusal test
+- [x] **Step 4** — full gate passed; M2a comparison in `results/final/sweep.csv`
 
 **Gate M2b:** same differential test, plus measurable improvement over M2a.
 
@@ -110,15 +106,15 @@ Four steps, each committed and reviewed separately:
 
 ## M3 — Static scheduler + full experiment sweep · by **2026-10-18**
 
-- [ ] Access-set profiling pass — derive read/write sets via `ReadRecorder`
+- [x] Access-set profiling pass — derive read/write sets via `ReadRecorder`
       ([DESIGN.md §7.2](DESIGN.md)), not from the workload generator
-- [ ] `StaticScheduler` — grouped by declared access sets; framed as an
+- [x] `StaticScheduler` — grouped by declared access sets; framed as an
       EIP-7928 prototype ([DESIGN.md §7.1](DESIGN.md))
-- [ ] All four workloads implemented and parameterised
-- [ ] Benchmark machine fixed (see [EXPERIMENTS.md §6.1](EXPERIMENTS.md) —
+- [x] All four workloads implemented and parameterised
+- [x] Benchmark machine fixed (see [EXPERIMENTS.md §6.1](EXPERIMENTS.md) —
       the M3 Pro's P/E core split constrains usable thread counts)
-- [ ] Full sweep executed, raw CSV committed under `results/`
-- [ ] Both headline figures generated
+- [x] Full sweep executed, raw CSV committed under `results/`
+- [x] Headline figures generated (`docs/figures/`)
 
 **Gate:** the two headline figures exist and are legible — speedup × thread
 count, and speedup × conflict rate.
@@ -127,11 +123,11 @@ count, and speedup × conflict rate.
 
 ## M4 — Report, slides, video · by **2026-10-25**
 
-- [ ] Report written, including the negative result as a first-class finding
+- [x] Report written, including the negative result as a first-class finding (`docs/REPORT.md`)
 - [ ] Slides
 - [ ] 10-minute video recorded
 - [ ] `docs/AI_USAGE.md` complete and honest
-- [ ] README updated with actual results and how to reproduce them
+- [x] README updated with actual results and how to reproduce them
 
 **Gate:** a teammate who did not write the code can follow the README and
 reproduce one figure.
